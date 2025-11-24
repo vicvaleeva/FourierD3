@@ -26,7 +26,7 @@ def decomp(types: List, c6tol: float):
         eigs, eigvecs = eigsh(c6ref_mat, k=k)
     err = maxrel_err(c6ref_mat, eigvecs @ np.diag(eigs) @ eigvecs.T)
     print(f'Using {k}-rank decomposition with maximum relative error: {err*100} %')   
-    return eigs, eigvecs
-        
+    return torch.Tensor(eigs), torch.Tensor(eigvecs)
 
-    
+def load_sqrtQz(types: List, device) -> torch.Tensor:
+    return torch.load('../data/sqrtQz.pt', weights_only=True)[types].to(device)

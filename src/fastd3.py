@@ -4,6 +4,8 @@ from torchpme.lib.kvectors import get_ns_mesh
 from torchpme.lib.mesh_interpolator import MeshInterpolator
 from torchpme.lib.kspace_filter import KSpaceFilter
 
+from pair_pot import D3Potential
+
 import torch
 
 class FastD3(torch.nn.Module):
@@ -46,16 +48,18 @@ class FastD3(torch.nn.Module):
 
         print("Assuming 3D PBC are satisfied")
         self.device = device
-        self.xcfunc = xcfunc.to(self.device)
+        self.xcfunc = xcfunc
         self.volume = torch.abs(torch.det(cell)).to(self.device)
         
         self.eigs, self.eigvecs = decomp(types, c6tol)
         self.eigs.to(device)
         self.eigvecs.to(device)
         
-        self.types = types.to(device)
+        # implement automatic choice from xc functional !
+        # these are just for pbe
+        params = torch.Tensor([1.0, 0.7875, 0.4289, 4.4407], device=device)
         
-        self.potential = 0 # implement!
+        self.potential = D3Potential(self.types, params, device)
         
         ns_mesh = get_ns_mesh(cell, mesh_spacing)
         
