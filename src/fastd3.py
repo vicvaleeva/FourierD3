@@ -1,10 +1,10 @@
 from typing import Optional, List
 from utils import decomp
 from torchpme.lib.kvectors import get_ns_mesh
-from torchpme.lib.mesh_interpolator import MeshInterpolator
-from torchpme.lib.kspace_filter import KSpaceFilter
 
 from pair_pot import D3Potential
+from kspace_filter_d3 import KSpaceFilterD3
+from mesh_interpolator_d3 import MeshInterpolatorD3
 
 import torch
 
@@ -63,13 +63,14 @@ class FastD3(torch.nn.Module):
         
         ns_mesh = get_ns_mesh(cell, mesh_spacing)
         
-        self.mesh_interpolator = MeshInterpolator(
+        self.mesh_interpolator = MeshInterpolatorD3(
             cell=cell,
             ns_mesh=ns_mesh,
-            interpolation_nodes=interpolation_nodes
+            interpolation_nodes=interpolation_nodes,
+            method="Lagrange"
         )
         
-        self.kspace_filter = KSpaceFilter(
+        self.kspace_filter = KSpaceFilterD3(
             cell=cell,
             ns_mesh=ns_mesh,
             kernel = self.potential,

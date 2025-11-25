@@ -20,7 +20,7 @@ class D3Potential(Potential):
         
         self.sqrtQz = load_sqrtQz(types, device)
         self.QzQz = torch.outer(self.sqrtQz, self.sqrtQz)
-        self.Rab = (params[2]*torch.sqrt(3*self.QzQz) + params[3]).unsqueeze(-1)
+        self.Rab = (params[2]*torch.sqrt(3*self.QzQz) + params[3]).view(*self.Rab.shape, 1, 1, 1)
         self.Rab3 = torch.pow(self.Rab, 3)
         self.Rab4 = self.Rab * self.Rab3
         self.Rab5 = self.Rab * self.Rab4
@@ -41,7 +41,7 @@ class D3Potential(Potential):
         
         
     def lr_from_k_sq(self, k_sq: torch.Tensor) -> torch.Tensor:
-        ksq = k_sq.view(1, 1, -1)
+        ksq = k_sq.view(1, 1, *k_sq.shape)
         k = torch.sqrt(ksq)
         kRab = k * self.Rab
         small = kRab < self.thresh
@@ -59,7 +59,7 @@ class D3Potential(Potential):
         
         val0 = (self.pi2 * self.sq2 * self.sin8) / self.Rab5
         coeff_k2 = (self.pi2 * (self.sin8 + self.cos8)) / (16 * self.sq2 * self.Rab3)
-        ft8_small = val0 - coeff_k2 * k_sq
+        ft8_small = val0 - coeff_k2 * ksq
         
         exp1 = torch.exp(-kRab_safe * self.sin8)
         arg1 = (self.pi / 4) + (kRab_safe * self.cos8)
@@ -72,6 +72,8 @@ class D3Potential(Potential):
         ft8_large = pre8 * num8
         
         ft8 = 3 * self.params[1] * torch.where(small, ft8_small, ft8_large)
+        
+        # returns (n_species, n_species, nx, ny, nz)
         
         return ft6 + torch.outer(self.sqrtQz, self.sqrtQz).unsqueeze(-1) * ft8
         
