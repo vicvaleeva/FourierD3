@@ -10,15 +10,15 @@ class D3Potential(Potential):
     
     def __init__(
         self,
-        types: List,
+        species: List,
         params: torch.Tensor,
         device
     ):
         super().__init__()
-        self.types = types
+        self.species = species
         self.params = params.to(device)
         
-        self.sqrtQz = load_sqrtQz(types, device)
+        self.sqrtQz = load_sqrtQz(species, device)
         self.QzQz = torch.outer(self.sqrtQz, self.sqrtQz)
         self.Rab = (params[2]*torch.sqrt(3*self.QzQz) + params[3]).view(*self.Rab.shape, 1, 1, 1)
         self.Rab3 = torch.pow(self.Rab, 3)

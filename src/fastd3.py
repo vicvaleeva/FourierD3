@@ -1,5 +1,6 @@
 from typing import Optional, List
 from utils import decomp
+from numpy import unique
 from torchpme.lib.kvectors import get_ns_mesh
 
 from pair_pot import D3Potential
@@ -19,7 +20,7 @@ class FastD3(torch.nn.Module):
     :param elements: list containing atom types for eigendecomposition,
         must contain at least all the atom types present in the cell
     :param cell: Tensor containing vectors defining the periodic cell dimensions
-    :param pbc: 3bBool tensor to verify pbc are activated in all directions
+    :param pbc: 3xBool tensor to verify pbc are activated in all directions
     :param mesh_spacing: parameter controlling mesh spacing (in Angstrom), 
         biggest influence on accuracy
     :param c6tol: maximum relative error for estimation of C6ref (in %), controls
@@ -31,7 +32,7 @@ class FastD3(torch.nn.Module):
     
     def __init__(
         self,
-        types: List,
+        species: List,
         cell: torch.Tensor,
         pbc: Optional[torch.Tensor],
         mesh_spacing: float = 1.2,
@@ -43,15 +44,20 @@ class FastD3(torch.nn.Module):
     ) -> None:
         super().__init__()
         
+        self.device = device
+        
         if pbc is not None:
             assert pbc.all(), "particle-mesh only supports 3d pbc, if you have 2d pbc, please make sure there's plenty of empty space in the third direction"
 
         print("Assuming 3D PBC are satisfied")
-        self.device = device
+        
+        species_unique = unique(species)
+        tmp = {species_unique[i] : i for i in range(len(species_unique))}
+        self.species = torch.Tensor([tmp[species[i]] for i in range(len(species))], dtype=torch.long, device=self.device)
         self.xcfunc = xcfunc
         self.volume = torch.abs(torch.det(cell)).to(self.device)
         
-        self.eigs, self.eigvecs = decomp(types, c6tol)
+        self.eigs, self.eigvecs = decomp(species_unique, c6tol)
         self.eigs.to(device)
         self.eigvecs.to(device)
         
@@ -59,7 +65,7 @@ class FastD3(torch.nn.Module):
         # these are just for pbe
         params = torch.Tensor([1.0, 0.7875, 0.4289, 4.4407], device=device)
         
-        self.potential = D3Potential(self.types, params, device)
+        self.potential = D3Potential(species_unique, params, device)
         
         ns_mesh = get_ns_mesh(cell, mesh_spacing)
         
@@ -79,9 +85,7 @@ class FastD3(torch.nn.Module):
         )
         
         
-        
-        
-        
-
-        
-        
+    def forward(positions,
+                edge_index,
+                shifts):
+        return 0
