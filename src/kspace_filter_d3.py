@@ -1,10 +1,11 @@
-from torchpme.lib.kspace_filter import KSpaceFilter, KSpaceKernel
+from torchpme.lib.kspace_filter import KSpaceFilter
+from torchpme.lib.kvectors import generate_kvectors_for_ewald
 
 import torch
 
 class KSpaceFilterD3(KSpaceFilter):
     
-    def forward(self, mesh_values: torch.Tensor) -> torch.Tensor:
+    def forward(self, mesh_values: torch.Tensor, eigs: torch.Tensor) -> torch.Tensor:
         
         # mesh_values has (n_species, n_rank, nx, ny, nz) dimensions
         
@@ -20,24 +21,36 @@ class KSpaceFilterD3(KSpaceFilter):
                 f"{mesh_values.device} and {self._kfilter.device}"
             )
             
-        mesh_hat = torch.fft.rfftn(mesh_values, norm=self._fft_norm, dims=(2, 3, 4))
+        mesh_hat = torch.fft.fftn(mesh_values, norm=self._fft_norm, dims=(2, 3, 4)).reshape(mesh_hat.shape[0], mesh_hat.shape[1], -1)
         
-        if mesh_hat.shape[-3:] != self._kfilter.shape[-3:]:
-            raise ValueError(
-                "The particle weight mesh is inconsistent with the k-space grid."
-            )
-        
-        filter_hat = torch.einsum('ikxyz,kjxyz->ijxyz', self._kfilter, mesh_hat)
-        
-        result = torch.fft.irfftn(filter_hat, norm=self._ifft_norm, dim=(2, 3, 4), s=mesh_hat.shape)
-        
-        if torch.isnan(result).any():
-            raise ValueError(
-                "NaNs detected in the k-space filter result. This are probably caused "
-                "by an unsuitable `mesh_spacing`, resulting in a problematic grid of "
-                f"shape: {list(mesh_values.shape)}. Try adjsuting the grid by using a "
-                "different `mesh_spacing` value."
-            )
+        filter_hat = torch.einsum('ijv, ikv, jkv -> kv', self._kfilter, mesh_hat, mesh_hat.conj())
+        result = torch.sum(torch.einsum('k,kv->v', eigs, filter_hat))
             
         return result
+    
+    
+    def _prep_kvectors(self, cell, ns_mesh):
+        if cell is not None:
+            if cell.shape != (3, 3):
+                raise ValueError(
+                    f"cell of shape {list(cell.shape)} should be of shape (3, 3)"
+                )
+            self.cell = cell
+
+        if ns_mesh is not None:
+            if ns_mesh.shape != (3,):
+                raise ValueError(
+                    f"shape {list(ns_mesh.shape)} of `ns_mesh` has to be (3,)"
+                )
+            self.ns_mesh = ns_mesh
+
+        if self.cell.device != self.ns_mesh.device:
+            raise ValueError(
+                "`cell` and `ns_mesh` are on different devices, got "
+                f"{self.cell.device} and {self.ns_mesh.device}"
+            )
+
+        if cell is not None or ns_mesh is not None:
+            self._kvectors = generate_kvectors_for_ewald(ns=self.ns_mesh, cell=self.cell)
+            self._k_sq = torch.linalg.norm(self._kvectors, dim=-1)
         

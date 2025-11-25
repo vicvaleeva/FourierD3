@@ -9,7 +9,7 @@ class MeshInterpolatorD3(MeshInterpolator):
             raise ValueError(f"Device mismatch: {particle_weights.device} vs {self._device}")
         
         if particle_weights.dim() != 3:
-            raise ValueError("particle_weights must be (n_points, n_species, n_rank)")
+            raise ValueError("particle_weights must be (n_atoms, n_species, n_rank)")
 
         _, n_species, n_rank = particle_weights.shape
         nx, ny, nz = int(self.ns_mesh[0]), int(self.ns_mesh[1]), int(self.ns_mesh[2])

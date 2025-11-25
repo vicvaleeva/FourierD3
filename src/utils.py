@@ -1,5 +1,5 @@
 from typing import List
-from warnings import catch_warnings, simplefilter
+from pathlib import Path
 
 import torch
 import numpy as np
@@ -8,14 +8,14 @@ from scipy.sparse.linalg import eigsh
 
 # load C6 reference tensor (104, 104, 7 ,7 )
 def load_c6ref(types: List) -> torch.Tensor:
-    c6ref = torch.load('../data/reference-c6.pt', weights_only=True)
+    current_dir = Path(__file__).parent.resolve()
+    c6ref = torch.load(current_dir / '..' / 'data' / 'reference-c6.pt', weights_only=True)
     return c6ref[types][:, types].permute(0, 2, 1, 3).reshape(len(types)*7, len(types)*7).numpy()
 
 # compute maximum relative error between reference c6 and low-rank approximation
 def maxrel_err(ref, approx) -> float:
-    with catch_warnings:
-        simplefilter('ignore')
-        return np.max(np.abs(ref-approx)*np.where(ref == 0, 0, 1/ref))
+    mask = np.where(ref == 0, 1.0, ref)
+    return np.max(np.abs(ref-approx)*np.where(ref == 0, 0, 1/mask))
 
 def decomp(types: List, c6tol: float):
     c6ref_mat = load_c6ref(types)
@@ -29,4 +29,13 @@ def decomp(types: List, c6tol: float):
     return torch.Tensor(eigs), torch.Tensor(eigvecs)
 
 def load_sqrtQz(types: List, device) -> torch.Tensor:
-    return torch.load('../data/sqrtQz.pt', weights_only=True)[types].to(device)
+    current_dir = Path(__file__).parent.resolve()
+    return torch.load(current_dir / '..' / 'data' / 'sqrtQz.pt', weights_only=True)[types].to(device)
+
+def load_rcov() -> torch.Tensor:
+    current_dir = Path(__file__).parent.resolve()
+    return torch.load(current_dir / '..' / 'data' / 'rcov.pt', weights_only=True)
+
+def load_cnref() -> torch.Tensor:
+    current_dir = Path(__file__).parent.resolve()
+    return torch.load(current_dir / '..' / 'data' / 'cnref.pt', weights_only=True)
