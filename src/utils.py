@@ -6,7 +6,7 @@ import numpy as np
 from scipy.sparse.linalg import eigsh
 
 
-# load C6 reference tensor (104, 104, 7 ,7 )
+# load C6 reference tensor (104, 104, 7, 7)
 def load_c6ref(types: List) -> torch.Tensor:
     current_dir = Path(__file__).parent.resolve()
     c6ref = torch.load(current_dir / '..' / 'data' / 'reference-c6.pt', weights_only=True)
@@ -26,7 +26,7 @@ def decomp(types: List, c6tol: float):
         eigs, eigvecs = eigsh(c6ref_mat, k=k)
     err = maxrel_err(c6ref_mat, eigvecs @ np.diag(eigs) @ eigvecs.T)
     print(f'Using {k}-rank decomposition with maximum relative error: {err*100} %')   
-    return torch.Tensor(eigs), torch.Tensor(eigvecs)
+    return torch.tensor(eigs, dtype=torch.float64), torch.tensor(eigvecs, dtype=torch.float64)
 
 def load_sqrtQz(types: List, device) -> torch.Tensor:
     current_dir = Path(__file__).parent.resolve()

@@ -68,15 +68,15 @@ class FastD3(torch.nn.Module):
         self.eigs.to(device)
         self.eigvecs.to(device)
         
-        self.rcov = load_rcov()[species_unique].to(self.device)
-        self.cnref = load_cnref()[species_unique, :].to(self.device)
+        self.rcov = load_rcov()[species_unique].to(device=self.device, dtype=torch.float64)
+        self.cnref = load_cnref()[species_unique, :].to(device=self.device, dtype=torch.float64)
         
         
         # implement automatic choice from xc functional !
         # these are just for pbe
-        params = torch.tensor([1.0, 0.7875, 0.4289, 4.4407], device=device)
+        params = torch.tensor([1.0, 0.7875, 0.4289, 4.4407], device=device, dtype=torch.float64)
         
-        potential = D3Potential(species_unique, params, device)
+        self.potential = D3Potential(species_unique, params, device)
         
         ns_mesh = get_ns_mesh(self.cell, mesh_spacing * self.angstrom_to_bohr)
         print('Using mesh size', ns_mesh.numpy())
@@ -91,7 +91,7 @@ class FastD3(torch.nn.Module):
         self.kspace_filter = KSpaceFilterD3(
             cell=self.cell,
             ns_mesh=ns_mesh,
-            kernel = potential,
+            kernel = self.potential,
             fft_norm="backward",
             ifft_norm="forward"
         )
@@ -109,6 +109,7 @@ class FastD3(torch.nn.Module):
         
         positions = self.angstrom_to_bohr * positions
         r_cut = self.angstrom_to_bohr * r_cut
+        shifts = self.angstrom_to_bohr * shifts
         
         n_atoms = positions.size(0)
         
@@ -146,22 +147,22 @@ class FastD3(torch.nn.Module):
         
         atom_refs = self.cnref[self.species]
         diff = cn.unsqueeze(1) - atom_refs
-        weights = torch.exp(-4.0 * torch.square(diff))
+        logits = -4.0 * torch.square(diff)
         
         mask = (atom_refs == -1)
-        weights.masked_fill_(mask, 0.0)
+        logits =  logits.masked_fill(mask, float('-inf'))
+        
+        weights = torch.softmax(logits, dim=1)
+        
         
         # calculate C6
         n_rank = self.eigvecs.shape[1]
-        n_total_rows = self.eigsvecs.shape[0] 
+        n_total_rows = self.eigvecs.shape[0] 
         n_species = n_total_rows // 7
         
         v_q_reshaped = self.eigvecs.view(n_species, 7, n_rank)
         atom_v_qs = v_q_reshaped[self.species]
-        numerator = torch.einsum('nk, nkr -> nr', weights, atom_v_qs)
-        denominator = weights.sum(dim=1, keepdim=True)
-        
-        c6 = numerator / denominator
+        c6 = torch.einsum('nk, nkr -> nr', weights, atom_v_qs)
         
         # one-hot encoding for species (since potential is species-dependent)
         
@@ -171,16 +172,21 @@ class FastD3(torch.nn.Module):
         # interpolate particle weights onto a mesh
         
         self.mesh_interpolator.compute_weights(positions)
-        rho_mesh = self.mesh_interpolator.points_to_mesh(c6)
+        rho_mesh = self.mesh_interpolator.points_to_mesh(onehot)
         
         # convolve with potential
-        energy = self.kspace_filter.forward(rho_mesh, self.eigs)
+        filtered_mesh = self.kspace_filter.forward(rho_mesh)
         
-        energy /= (-self.volume)
-        vself = torch.dot(self.eigs, torch.sum(torch.square(c6)*self.potential.selfcont[self.species], dim=-1))
-        energy += vself
-        energy /= 2
+        potentials_all = self.mesh_interpolator.mesh_to_points(filtered_mesh)
+        potentials = potentials_all[torch.arange(n_atoms, device=self.device), self.species]
         
+        atom_energies = torch.sum((c6 * potentials) @ self.eigs.view(-1, 1), dim=-1)
+        
+        atom_energies /= (-2*self.volume)
+        
+        tmp = torch.sum(torch.square(c6)*self.potential.selfcont[self.species], dim=0)
+        vself = torch.dot(self.eigs, tmp)/2
+        energy = torch.sum(atom_energies) + vself
         return energy
         
         

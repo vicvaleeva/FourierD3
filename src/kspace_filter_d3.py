@@ -1,11 +1,11 @@
 from torchpme.lib.kspace_filter import KSpaceFilter
-from torchpme.lib.kvectors import generate_kvectors_for_ewald
+from torchpme.lib.kvectors import generate_kvectors_for_mesh
 
 import torch
 
 class KSpaceFilterD3(KSpaceFilter):
     
-    def forward(self, mesh_values: torch.Tensor, eigs: torch.Tensor) -> torch.Tensor:
+    def forward(self, mesh_values: torch.Tensor) -> torch.Tensor:
         
         # mesh_values has (n_species, n_rank, nx, ny, nz) dimensions
         
@@ -21,13 +21,12 @@ class KSpaceFilterD3(KSpaceFilter):
                 f"{mesh_values.device} and {self._kfilter.device}"
             )
             
-        mesh_hat = torch.fft.fftn(mesh_values, norm=self._fft_norm, dims=(2, 3, 4)).reshape(mesh_hat.shape[0], mesh_hat.shape[1], -1)
+        mesh_hat = torch.fft.rfftn(mesh_values, norm=self._fft_norm, dim=(2, 3, 4))
         
-        filter_hat = torch.einsum('ijv, ikv, jkv -> kv', self._kfilter, mesh_hat, mesh_hat.conj())
-        result = torch.sum(torch.einsum('k,kv->v', eigs, filter_hat))
-            
-        return result
-    
+        filter_hat = torch.einsum('ijxyz, jrxyz -> irxyz', self._kfilter, mesh_hat)
+        filtered_mesh = torch.fft.irfftn(filter_hat, norm=self._ifft_norm, dim=(2, 3, 4), s=mesh_values.shape[-3:])
+        
+        return filtered_mesh
     
     def _prep_kvectors(self, cell, ns_mesh):
         if cell is not None:
@@ -51,6 +50,6 @@ class KSpaceFilterD3(KSpaceFilter):
             )
 
         if cell is not None or ns_mesh is not None:
-            self._kvectors = generate_kvectors_for_ewald(ns=self.ns_mesh, cell=self.cell)
+            self._kvectors = generate_kvectors_for_mesh(ns=self.ns_mesh, cell=self.cell)
             self._k_sq = torch.linalg.norm(self._kvectors, dim=-1)
         
