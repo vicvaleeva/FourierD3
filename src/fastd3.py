@@ -1,8 +1,8 @@
 from typing import Optional, List
 from utils import decomp, load_rcov, load_cnref
 from numpy import unique
-from torchpme.lib.kvectors import get_ns_mesh
-
+from torchpme.lib.kvectors import get_ns_mesh, generate_kvectors_for_ewald
+import matplotlib.pyplot as plt
 from pair_pot import D3Potential
 from kspace_filter_d3 import KSpaceFilterD3
 from mesh_interpolator_d3 import MeshInterpolatorD3
@@ -34,22 +34,24 @@ class FastD3(torch.nn.Module):
         self,
         species: List,
         cell: torch.tensor,
-        pbc: Optional[torch.tensor],
+        pbc: Optional[torch.tensor] = None,
         mesh_spacing: float = 1.2,
         c6tol: float = 1,
         xcfunc: str = 'pbe',
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
         method: str = 'pme',
-        interpolation_nodes: int = 4
+        interpolation_nodes: int = 4,
+        k_cutoff: float = 1.0,
+        verbose = True
     ) -> None:
         super().__init__()
         
         self.device = device
-        
+        self.method = method
         if pbc is not None:
             assert pbc.all(), "particle-mesh only supports 3d pbc, if you have 2d pbc, please make sure there's plenty of empty space in the third direction"
-
-        print("Assuming 3D PBC are satisfied")
+        if verbose:
+            print("Assuming 3D PBC are satisfied")
         species_unique = unique(species)
         tmp = {species_unique[i] : i for i in range(len(species_unique))}
         converted_species = [tmp[species[i]] for i in range(len(species))]
@@ -57,14 +59,13 @@ class FastD3(torch.nn.Module):
         
         self.xcfunc = xcfunc
         
-        self.angstrom_to_bohr = torch.tensor(1.8897161646321, device=self.device)
-        self.hartree_to_kcalmol = torch.tensor(627.5094740631, device=self.device)
+        self.angstrom_to_bohr = torch.tensor(1.8897259492972167, device=self.device)
         self.cell = torch.from_numpy(cell.array) * self.angstrom_to_bohr
         self.cell.to(device)
         
         self.volume = torch.abs(torch.det(self.cell)).to(self.device)
         
-        self.eigs, self.eigvecs = decomp(species_unique, c6tol)
+        self.eigs, self.eigvecs = decomp(species_unique, c6tol, verbose)
         self.eigs.to(device)
         self.eigvecs.to(device)
         
@@ -76,25 +77,37 @@ class FastD3(torch.nn.Module):
         # these are just for pbe
         params = torch.tensor([1.0, 0.7875, 0.4289, 4.4407], device=device, dtype=torch.float64)
         
-        self.potential = D3Potential(species_unique, params, device)
+        self.potential = D3Potential(species_unique, params, device, method)
         
-        ns_mesh = get_ns_mesh(self.cell, mesh_spacing * self.angstrom_to_bohr)
-        print('Using mesh size', ns_mesh.numpy())
+        if method == 'pme':
         
-        self.mesh_interpolator = MeshInterpolatorD3(
-            cell=self.cell,
-            ns_mesh=ns_mesh,
-            interpolation_nodes=interpolation_nodes,
-            method="Lagrange"
-        )
-        
-        self.kspace_filter = KSpaceFilterD3(
-            cell=self.cell,
-            ns_mesh=ns_mesh,
-            kernel = self.potential,
-            fft_norm="backward",
-            ifft_norm="forward"
-        )
+            ns_mesh = get_ns_mesh(self.cell, mesh_spacing * self.angstrom_to_bohr)
+            if verbose:
+                print('Using mesh size', ns_mesh.numpy())
+            
+            self.mesh_interpolator = MeshInterpolatorD3(
+                cell=self.cell,
+                ns_mesh=ns_mesh,
+                interpolation_nodes=interpolation_nodes,
+                method="Lagrange"
+            )
+            
+            self.kspace_filter = KSpaceFilterD3(
+                cell=self.cell,
+                ns_mesh=ns_mesh,
+                kernel = self.potential,
+                fft_norm="backward",
+                ifft_norm="forward"
+            )
+            
+        if method == 'ewald':
+            basis_norms = torch.linalg.norm(self.cell, dim=1)
+            ns_float = k_cutoff * basis_norms / 2 / torch.pi
+            ns = torch.ceil(ns_float).long()
+            
+            self.kvectors = generate_kvectors_for_ewald(ns=ns, cell=self.cell).to(self.device)
+            self.knorm = torch.linalg.norm(self.kvectors, dim=1)
+            self.G = self.potential.lr_from_k_sq(self.knorm)
         
         
     def forward(self, positions,
@@ -112,6 +125,7 @@ class FastD3(torch.nn.Module):
         shifts = self.angstrom_to_bohr * shifts
         
         n_atoms = positions.size(0)
+        
         
         # calculate CNs
         
@@ -164,29 +178,43 @@ class FastD3(torch.nn.Module):
         atom_v_qs = v_q_reshaped[self.species]
         c6 = torch.einsum('nk, nkr -> nr', weights, atom_v_qs)
         
+        
         # one-hot encoding for species (since potential is species-dependent)
         
         onehot = torch.zeros(n_atoms, n_species, n_rank, device=c6.device, dtype=c6.dtype)
         onehot[torch.arange(n_atoms), self.species, :] = c6
         
-        # interpolate particle weights onto a mesh
-        
-        self.mesh_interpolator.compute_weights(positions)
-        rho_mesh = self.mesh_interpolator.points_to_mesh(onehot)
-        
-        # convolve with potential
-        filtered_mesh = self.kspace_filter.forward(rho_mesh)
-        
-        potentials_all = self.mesh_interpolator.mesh_to_points(filtered_mesh)
-        potentials = potentials_all[torch.arange(n_atoms, device=self.device), self.species]
-        
-        atom_energies = torch.sum((c6 * potentials) @ self.eigs.view(-1, 1), dim=-1)
-        
-        atom_energies /= (-2*self.volume)
-        
         tmp = torch.sum(torch.square(c6)*self.potential.selfcont[self.species], dim=0)
-        vself = torch.dot(self.eigs, tmp)/2
-        energy = torch.sum(atom_energies) + vself
+        vself = torch.dot(self.eigs, tmp)
+        
+        if self.method == 'pme':
+        
+            # interpolate particle weights onto a mesh
+            
+            self.mesh_interpolator.compute_weights(positions)
+            rho_mesh = self.mesh_interpolator.points_to_mesh(onehot)
+            
+            # convolve with potential
+            filtered_hat = self.kspace_filter.forward(rho_mesh)
+            
+            energy = torch.dot(self.eigs, filtered_hat.real)
+            
+        elif self.method == 'ewald':
+            trig_args = self.kvectors @ (positions.T)
+            
+            c = torch.cos(trig_args)
+            s = torch.sin(trig_args)
+            
+            ex = torch.stack([c, s], dim=0)
+            
+            sc = torch.einsum('izr, pki -> rzpk', onehot, ex)
+
+            convolved = torch.einsum('ijk, ripk, rjpk -> rijk', self.G, sc, sc)
+
+            energy = torch.dot(self.eigs, torch.sum(convolved, dim=(1, 2, 3)))
+        
+        energy /= (-2*self.volume)
+        energy += vself/2
         return energy
         
         

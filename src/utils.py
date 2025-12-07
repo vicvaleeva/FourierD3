@@ -17,7 +17,7 @@ def maxrel_err(ref, approx) -> float:
     mask = np.where(ref == 0, 1.0, ref)
     return np.max(np.abs(ref-approx)*np.where(ref == 0, 0, 1/mask))
 
-def decomp(types: List, c6tol: float):
+def decomp(types: List, c6tol: float, verbose: bool):
     c6ref_mat = load_c6ref(types)
     k = 1
     eigs, eigvecs = eigsh(c6ref_mat, k=k)
@@ -25,7 +25,8 @@ def decomp(types: List, c6tol: float):
         k += 1
         eigs, eigvecs = eigsh(c6ref_mat, k=k)
     err = maxrel_err(c6ref_mat, eigvecs @ np.diag(eigs) @ eigvecs.T)
-    print(f'Using {k}-rank decomposition with maximum relative error: {err*100} %')   
+    if verbose:
+        print(f'Using {k}-rank decomposition with maximum relative error: {err*100} %')   
     return torch.tensor(eigs, dtype=torch.float64), torch.tensor(eigvecs, dtype=torch.float64)
 
 def load_sqrtQz(types: List, device) -> torch.Tensor:

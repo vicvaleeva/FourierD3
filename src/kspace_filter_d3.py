@@ -1,5 +1,5 @@
 from torchpme.lib.kspace_filter import KSpaceFilter
-from torchpme.lib.kvectors import generate_kvectors_for_mesh
+from torchpme.lib.kvectors import _generate_kvectors
 
 import torch
 
@@ -21,12 +21,11 @@ class KSpaceFilterD3(KSpaceFilter):
                 f"{mesh_values.device} and {self._kfilter.device}"
             )
             
-        mesh_hat = torch.fft.rfftn(mesh_values, norm=self._fft_norm, dim=(2, 3, 4))
+        mesh_hat = torch.fft.fftn(mesh_values, norm=self._fft_norm, dim=(2, 3, 4))
         
-        filter_hat = torch.einsum('ijxyz, jrxyz -> irxyz', self._kfilter, mesh_hat)
-        filtered_mesh = torch.fft.irfftn(filter_hat, norm=self._ifft_norm, dim=(2, 3, 4), s=mesh_values.shape[-3:])
+        filter_hat = torch.einsum('ijxyz, irxyz, jrxyz -> r', self._kfilter, mesh_hat, mesh_hat.conj())
         
-        return filtered_mesh
+        return filter_hat
     
     def _prep_kvectors(self, cell, ns_mesh):
         if cell is not None:
@@ -50,6 +49,6 @@ class KSpaceFilterD3(KSpaceFilter):
             )
 
         if cell is not None or ns_mesh is not None:
-            self._kvectors = generate_kvectors_for_mesh(ns=self.ns_mesh, cell=self.cell)
+            self._kvectors = _generate_kvectors(ns=self.ns_mesh, cell=self.cell, for_ewald=True)
             self._k_sq = torch.linalg.norm(self._kvectors, dim=-1)
         
