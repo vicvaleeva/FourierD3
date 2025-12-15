@@ -6,6 +6,8 @@ from fastd3 import FastD3
 import numpy as np
 from matscipy.neighbours import neighbour_list
 
+# This script tests the FastD3 calculator for different mesh sizes
+
 device = torch.device('cuda')
 start_event = torch.cuda.Event(enable_timing=True)
 end_event = torch.cuda.Event(enable_timing=True)

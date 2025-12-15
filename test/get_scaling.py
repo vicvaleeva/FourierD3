@@ -6,6 +6,9 @@ from fastd3 import FastD3
 import numpy as np
 from matscipy.neighbours import neighbour_list
 
+# Timing script for truncated D3 and FastD3
+# The cutoff for truncated D3 is chosen to match th force Max AE
+
 def helper(conf):
     sender, receiver, unit_shifts = neighbour_list(
         quantities="ijS",

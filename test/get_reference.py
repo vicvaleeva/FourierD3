@@ -3,6 +3,8 @@ from ase.io import read
 import torch
 import time
 
+# This script generates reference forces with long-cutoff classic D3 for benchmarking
+
 mats = ['water', 'benzene', 'hea']
 sizes = ['100', '250', '500', '750', '1000', '2500', '5000', '7500', '10000', '25000']
 forces = {}

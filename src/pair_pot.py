@@ -44,10 +44,14 @@ class D3Potential(Potential):
         
         
     def lr_from_k_sq(self, _k: torch.tensor) -> torch.tensor:
+        # this method actually takes in |k|, not |k|^2 - naming preserved according to torch-pme
         k = _k.view(1, 1, *_k.shape)
         ksq = torch.square(k)
         kRab = k * self.Rab
+        
+        # use taylor approximation for small k * R_{AB} due to removable singularity
         small = kRab < self.thresh
+        
         k_safe = torch.where(small, 1.0, k)
         kRab_safe = k_safe * self.Rab
         

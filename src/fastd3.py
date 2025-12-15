@@ -11,18 +11,19 @@ from mesh_interpolator_d3 import MeshInterpolatorD3
 import torch
 
 class FastD3(torch.nn.Module):
-    """
-    Optimized Fast D3 calculator in the torch interface.
-    Uses particle-mesh methods (PME and P3M) to perform fast summation
-    of the ~inherently~ long-ranged damped D3 correction potential.
-    
-    Key optimizations:
-    - Pre-computed constants cached as buffers
-    - Fused operations to reduce kernel launches
-    - Vectorized computations where possible
-    - Reduced memory allocations
-    - torch.compile compatibility
-    """
+    '''
+    species: atoms.numbers List for the configuration
+    cell: atoms.cell
+    pbc: atoms.pbc
+    mesh_spacing: parameter controlling mesh size for PME, the smaller the better
+    c6tol: parameter controlling accuracy of C6ref eigendecomposition, the smaller the better
+    xcfunc: underlying xc functional
+    device: torch device
+    method: either ewald or pme
+    k_cutoff: parameter controlling cutoff in the reciprocal space for Ewald, the bigger the better
+    interpolation_nodes: number of interpolation nodes used for PPME
+    verbose: print stuff or not 
+    '''
     
     def __init__(
         self,
@@ -44,12 +45,12 @@ class FastD3(torch.nn.Module):
         self.method = method
         
         if pbc is not None:
-            assert pbc.all(), "particle-mesh only supports 3d pbc"
+            assert pbc.all(), "ewald summation only supports 3d pbc"
         
         if verbose:
             print("Assuming 3D PBC are satisfied")
         
-        # Convert species once
+        # adapt atoms.numbers for inner use
         species_unique = unique(species)
         species_map = {species_unique[i]: i for i in range(len(species_unique))}
         converted_species = torch.tensor(
@@ -86,7 +87,7 @@ class FastD3(torch.nn.Module):
         self.n_rank = eigvecs.shape[1]
         
         # Pre-reshape eigenvectors for faster access
-        n_total_rows = eigvecs.shape[0]
+        _ = eigvecs.shape[0]
         v_q_reshaped = eigvecs.view(self.n_species, 7, self.n_rank)
         self.register_buffer('v_q_reshaped', v_q_reshaped)
         
@@ -101,7 +102,7 @@ class FastD3(torch.nn.Module):
         self.register_buffer('factor_cn', torch.tensor(4.0/3.0, dtype=torch.float64, device=device))
         self.register_buffer('logit_scale', torch.tensor(-4.0, dtype=torch.float64, device=device))
         
-        # D3 parameters
+        # D3 XC functional parameters
         params = torch.tensor([1.0, 0.7875, 0.4289, 4.4407], device=device, dtype=torch.float64)
         self.potential = D3Potential(species_unique, params, device, method)
         
@@ -112,6 +113,8 @@ class FastD3(torch.nn.Module):
             ns_mesh = get_ns_mesh(cell_bohr, mesh_spacing * angstrom_to_bohr)
             if verbose:
                 print('Using mesh size', ns_mesh)
+                
+            # Define an interpolator
             
             self.mesh_interpolator = MeshInterpolatorD3(
                 cell=cell_bohr,
@@ -119,6 +122,8 @@ class FastD3(torch.nn.Module):
                 interpolation_nodes=interpolation_nodes,
                 method="Lagrange"
             )
+            
+            # Define a reciprocal space filter
             
             self.kspace_filter = KSpaceFilterD3(
                 cell=cell_bohr,
@@ -129,6 +134,8 @@ class FastD3(torch.nn.Module):
             )
             
         elif method == 'ewald':
+            # get k-vectors and kernel for ewald 
+            
             basis_norms = torch.linalg.norm(cell_bohr, dim=1)
             ns_float = k_cutoff * basis_norms / (2 * torch.pi)
             ns = torch.ceil(ns_float).long()
@@ -160,6 +167,11 @@ class FastD3(torch.nn.Module):
         
         # covalent radius lookup
         r_cov_sum = self.rcov[self.species[source_m]] + self.rcov[self.species[target_m]]
+        
+        '''
+        Some terms here are commented as smoothing of the CNs can significantly disturb
+        calculations at 5-6 Å cutoffs
+        '''
         
         # sigmoid calculations
         inv_r = 1.0 / r_ab_m
@@ -209,7 +221,6 @@ class FastD3(torch.nn.Module):
                 shifts: torch.Tensor, 
                 r_cut: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass with optimized operations.
         
         Args:
             positions: Atomic positions [N, 3]
@@ -221,14 +232,13 @@ class FastD3(torch.nn.Module):
             D3 dispersion energy
         """
         
+        # unit conversion to Bohr to match tabulated values
+        
         positions = positions * self.angstrom_to_bohr
         r_cut = r_cut * self.angstrom_to_bohr
         shifts = shifts * self.angstrom_to_bohr
         
         n_atoms = positions.size(0)
-        
-        start_event = torch.cuda.Event(enable_timing=True)
-        end_event = torch.cuda.Event(enable_timing=True)
         
         # Compute coordination numbers
         cn = self.compute_cn(positions, edge_index, shifts, r_cut)
@@ -253,13 +263,17 @@ class FastD3(torch.nn.Module):
         vself = torch.dot(self.eigs, tmp)
         
         if self.method == 'pme':
-            # PME method
+            # compute interpolation weights
             self.mesh_interpolator.compute_weights(positions)
+            # interpolate C6 onto meshes
             rho_mesh = self.mesh_interpolator.points_to_mesh(onehot)
+            # convolve with the kernel
             filtered_hat = self.kspace_filter.forward(rho_mesh)
             energy = torch.dot(self.eigs, filtered_hat.real)
             
         elif self.method == 'ewald':
+            # get k\cdot r
+            
             trig_args = torch.matmul(self.kvectors, positions.T)
             
             c = torch.cos(trig_args)

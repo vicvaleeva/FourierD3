@@ -1,12 +1,63 @@
 # fastd3
 
+## Installation
+
 To install this package, clone this directory and run 
 
 ```sh
 pip install -e .
 ```
 
-You can use `requirements.txt` to configure the environment, but you mainly need torch, ase, and torch-pme. Additionally, you can install torch-dftd to run comparison tests with classic D3
+You can use `requirements.txt` to configure the environment, but you mainly need torch, ase, torch-pme, and matscipy. Additionally, you can install torch-dftd to run comparison tests with classic D3
 
+## Example usage
 
+```python
+import numpy as np
+import torch
 
+from fastd3 import FastD3
+from ase.build import molecule
+from matscipy.neighbours import neighbour_list
+
+device = torch.device('cuda')
+r_cut = torch.tensor(6.0).to(device)
+
+# one would normally re-use the neighbour list from an MLIP,
+# but here we build it manually for demostrations
+
+def helper(conf):
+    sender, receiver, unit_shifts = neighbour_list(
+        quantities="ijS",
+        pbc=conf.pbc,
+        cell=conf.cell,
+        positions=conf.positions,
+        cutoff=6.0
+    )
+
+    edge_index = np.stack((sender, receiver))
+    shifts = np.dot(unit_shifts, conf.cell)
+    
+    edge_index = torch.from_numpy(edge_index).to(device)
+    shifts = torch.from_numpy(shifts).to(device)
+    
+    return edge_index, shifts
+
+# get a benzene molecule
+
+conf = molecule('C6H6', vacuum=5.0)
+conf.set_pbc(True)
+
+# initialize the calculator
+
+calc = FastD3(species=conf.numbers, cell=conf.cell, method='pme')
+
+positions = torch.from_numpy(conf.positions).to(device)
+edge_index, shifts = helper(conf)
+
+positions.requires_grad_(True)
+energy_fastd3 = calc.forward(positions, edge_index, shifts, r_cut)
+energy_fastd3 *= 27.21138505 # convert from Hartree to eV
+energy_fastd3.backward()
+forces_calc = -positions.grad*1000 # forces in meV/Å
+```

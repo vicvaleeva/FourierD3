@@ -3,6 +3,9 @@ from ase.io import read
 import torch
 import time
 
+# This script tests the classic D3 calculator for a variety of cutoffs
+
+
 mats = ['water', 'benzene', 'hea']
 cutoffs = [6, 8, 10, 12, 14, 16, 18, 20]
 forces = {}

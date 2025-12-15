@@ -1,6 +1,8 @@
 import numpy as np
 import os
 
+# generates water, benzene, and hea boxes of various sizes for testing
+
 # --- Helper Functions ---
 def get_pbc_distance(pos, box_length):
     """Wraps coordinates into the box [0, box_length)."""
