@@ -19,8 +19,7 @@ class KSpaceFilterD3(KSpaceFilter):
             raise ValueError(
                 "`mesh_values` and the k-space filter are on different devices, got "
                 f"{mesh_values.device} and {self._kfilter.device}"
-            )
-            
+            )     
         mesh_hat = torch.fft.fftn(mesh_values, norm=self._fft_norm, dim=(2, 3, 4))
         
         filter_hat = torch.einsum('ijxyz, irxyz, jrxyz -> r', self._kfilter, mesh_hat, mesh_hat.conj())

@@ -71,7 +71,7 @@ class FastD3(torch.nn.Module):
             torch.tensor(angstrom_to_bohr, dtype=torch.float64, device=device)
         )
         
-        cell_bohr = torch.from_numpy(cell.array).to(device=device, dtype=torch.float64) * angstrom_to_bohr
+        cell_bohr = torch.from_numpy(cell.array).to(device=device, dtype=torch.float64) * self.angstrom_to_bohr
         self.register_buffer('cell', cell_bohr)
         
         volume = torch.abs(torch.det(cell_bohr))
@@ -79,8 +79,10 @@ class FastD3(torch.nn.Module):
         
         # Load and cache eigendecomposition
         eigs, eigvecs = decomp(species_unique, c6tol, verbose)
-        self.register_buffer('eigs', eigs.to(device=device, dtype=torch.float64))
-        self.register_buffer('eigvecs', eigvecs.to(device=device, dtype=torch.float64))
+        eigs = eigs.to(device=device, dtype=torch.float64)
+        eigvecs = eigvecs.to(device=device, dtype=torch.float64)
+        self.register_buffer('eigs', eigs)
+        self.register_buffer('eigvecs', eigvecs)
         self.n_rank = eigvecs.shape[1]
         
         # Pre-reshape eigenvectors for faster access
@@ -109,7 +111,7 @@ class FastD3(torch.nn.Module):
         if method == 'pme':
             ns_mesh = get_ns_mesh(cell_bohr, mesh_spacing * angstrom_to_bohr)
             if verbose:
-                print('Using mesh size', ns_mesh.numpy())
+                print('Using mesh size', ns_mesh)
             
             self.mesh_interpolator = MeshInterpolatorD3(
                 cell=cell_bohr,
@@ -161,24 +163,24 @@ class FastD3(torch.nn.Module):
         
         # sigmoid calculations
         inv_r = 1.0 / r_ab_m
-        inv_r_cut = 1.0 / r_cut
+        #inv_r_cut = 1.0 / r_cut
         
         ratio = self.factor_cn * r_cov_sum
         arg_r = -self.k_cn * (ratio * inv_r - 1.0)
-        arg_cut = -self.k_cn * (ratio * inv_r_cut - 1.0)
+        #arg_cut = -self.k_cn * (ratio * inv_r_cut - 1.0)
         
         # Combined exponential operations
         exp_r = torch.exp(arg_r)
-        exp_cut = torch.exp(arg_cut)
+        #exp_cut = torch.exp(arg_cut)
         
         term1 = 1.0 / (1.0 + exp_r)
-        term2 = 1.0 / (1.0 + exp_cut)
+        #term2 = 1.0 / (1.0 + exp_cut)
         
         # derivative term
-        sigmoid_deriv = exp_cut / torch.square(1.0 + exp_cut)
-        dist_diff = r_ab_m - r_cut
-        prefactor = (64.0 * r_cov_sum) / (3.0 * (r_cut ** 2))
-        term3 = dist_diff * prefactor * sigmoid_deriv
+        #sigmoid_deriv = exp_cut / torch.square(1.0 + exp_cut)
+        #dist_diff = r_ab_m - r_cut
+        #prefactor = (64.0 * r_cov_sum) / (3.0 * (r_cut ** 2))
+        #term3 = dist_diff * prefactor * sigmoid_deriv
         
         #edge_contributions = term1 - term2 + term3
         edge_contributions = term1
@@ -218,14 +220,19 @@ class FastD3(torch.nn.Module):
         Returns:
             D3 dispersion energy
         """
+        
         positions = positions * self.angstrom_to_bohr
         r_cut = r_cut * self.angstrom_to_bohr
         shifts = shifts * self.angstrom_to_bohr
         
         n_atoms = positions.size(0)
         
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        
         # Compute coordination numbers
         cn = self.compute_cn(positions, edge_index, shifts, r_cut)
+        
         # Compute weights
         weights = self.compute_c6_weights(cn)
         
@@ -237,6 +244,7 @@ class FastD3(torch.nn.Module):
         onehot = torch.zeros(n_atoms, self.n_species, self.n_rank, 
                             device=c6.device, dtype=c6.dtype)
         onehot[torch.arange(n_atoms, device=self.device), self.species] = c6
+        
         
         # Self-interaction energy (fused operations)
         c6_sq = torch.square(c6)
