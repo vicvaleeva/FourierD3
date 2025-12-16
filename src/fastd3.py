@@ -13,7 +13,7 @@ import torch
 class FastD3(torch.nn.Module):
     '''
     species: atoms.numbers List for the configuration
-    cell: atoms.cell
+    cell: torch tensor of cell
     pbc: atoms.pbc
     mesh_spacing: parameter controlling mesh size for PME, the smaller the better
     c6tol: parameter controlling accuracy of C6ref eigendecomposition, the smaller the better
@@ -72,7 +72,7 @@ class FastD3(torch.nn.Module):
             torch.tensor(angstrom_to_bohr, dtype=torch.float64, device=device)
         )
         
-        cell_bohr = torch.from_numpy(cell.array).to(device=device, dtype=torch.float64) * self.angstrom_to_bohr
+        cell_bohr = cell * self.angstrom_to_bohr
         self.register_buffer('cell', cell_bohr)
         
         volume = torch.abs(torch.det(cell_bohr))
