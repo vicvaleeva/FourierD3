@@ -26,7 +26,7 @@ class KSpaceFilterD3(KSpaceFilter):
         mesh_ready = mesh_hat.flatten(2).permute(2, 0, 1).contiguous()
         
         interm = torch.bmm(self._kfilter, mesh_ready.conj())
-        filter_hat = (mesh_ready.real * interm).real.sum(dim=(0, 1))
+        filter_hat = (mesh_ready * interm).real.sum(dim=(0, 1))
         
         return filter_hat
     
