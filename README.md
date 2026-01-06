@@ -22,6 +22,7 @@ from matscipy.neighbours import neighbour_list
 
 device = torch.device('cuda')
 r_cut = torch.tensor(6.0).to(device)
+angstrom_to_bohr = 1.8897259492972167
 
 # one would normally re-use the neighbour list from an MLIP,
 # but here we build it manually for demostrations
@@ -74,5 +75,5 @@ energy_fastd3 = calc.forward(strained_pos, edge_index, strained_shifts, r_cut) #
 energy_fastd3 *= 27.21138505 # convert from Hartree to eV
 energy_fastd3.backward()
 forces_calc = -positions.grad*1000 # forces in meV/Å
-stress_calc = strain.grad / calc.volume # stress
+stress_calc = strain.grad / calc.volume * (angstrom_to_bohr)**3 # stress
 ```

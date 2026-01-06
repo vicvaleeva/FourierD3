@@ -72,7 +72,7 @@ class FastD3(torch.nn.Module):
             torch.tensor(angstrom_to_bohr, dtype=torch.float64, device=device)
         )
         
-        cell_bohr = torch.from_numpy(cell.array).to(device=device, dtype=torch.float64) * self.angstrom_to_bohr
+        cell_bohr = cell * self.angstrom_to_bohr
         self.register_buffer('cell', cell_bohr)
         
         volume = torch.abs(torch.det(cell_bohr))
