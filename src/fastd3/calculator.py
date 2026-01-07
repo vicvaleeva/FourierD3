@@ -8,14 +8,14 @@ from fastd3 import FastD3
 
 
 class FastD3ASECalculator(Calculator):
-    """
+    '''
     ASE wrapper matching the FastD3 usage pattern in your example.
 
     - neighbour_list from matscipy
     - explicit strain tensor for stress
     - forces from autograd
     - Hartree → eV conversion
-    """
+    '''
 
     implemented_properties = ["energy", "forces", "stress"]
 
@@ -45,7 +45,7 @@ class FastD3ASECalculator(Calculator):
     def _build_model(self, atoms):
         self._model = FastD3(
             species=atoms.numbers,
-            cell=atoms.cell,
+            cell=torch.tensor(atoms.cell.array, device=self.device),
             pbc=torch.tensor(atoms.pbc, device=self.device),
             method=self.method,
             verbose=self.verbose,

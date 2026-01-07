@@ -1,5 +1,5 @@
 from ase.build import molecule
-from calculator import FastD3ASECalculator
+from fastd3.calculator import FastD3ASECalculator
 import torch
 
 conf = molecule("C6H6", vacuum=5.0)

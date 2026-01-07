@@ -1,5 +1,6 @@
-from torchpme.lib.mesh_interpolator import MeshInterpolator
 import torch
+
+from torchpme.lib.mesh_interpolator import MeshInterpolator
 
 class MeshInterpolatorD3(MeshInterpolator):
     @torch.jit.export

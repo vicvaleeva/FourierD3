@@ -1,14 +1,13 @@
 from typing import Optional, List
-from utils import decomp, load_rcov, load_cnref
-from numpy import unique
-from torchpme.lib.kvectors import get_ns_mesh, generate_kvectors_for_ewald
-import matplotlib.pyplot as plt
-import time
-from pair_pot import D3Potential
-from kspace_filter_d3 import KSpaceFilterD3
-from mesh_interpolator_d3 import MeshInterpolatorD3
 
 import torch
+from numpy import unique
+from torchpme.lib.kvectors import get_ns_mesh, generate_kvectors_for_ewald
+
+from fastd3.utils import decomp, load_rcov, load_cnref
+from fastd3.pair_pot import D3Potential
+from fastd3.kspace_filter_d3 import KSpaceFilterD3
+from fastd3.mesh_interpolator_d3 import MeshInterpolatorD3
 
 class FastD3(torch.nn.Module):
     '''

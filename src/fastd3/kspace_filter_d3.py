@@ -1,7 +1,7 @@
+import torch
+
 from torchpme.lib.kspace_filter import KSpaceFilter
 from torchpme.lib.kvectors import _generate_kvectors
-
-import torch
 
 class KSpaceFilterD3(KSpaceFilter):
     
