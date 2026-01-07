@@ -3,6 +3,7 @@ from utils import decomp, load_rcov, load_cnref
 from numpy import unique
 from torchpme.lib.kvectors import get_ns_mesh, generate_kvectors_for_ewald
 import matplotlib.pyplot as plt
+import time
 from pair_pot import D3Potential
 from kspace_filter_d3 import KSpaceFilterD3
 from mesh_interpolator_d3 import MeshInterpolatorD3
@@ -10,25 +11,19 @@ from mesh_interpolator_d3 import MeshInterpolatorD3
 import torch
 
 class FastD3(torch.nn.Module):
-    """
-    Fast D3 calculator in the torch interface.
-    Uses particle-mesh methods (PME and P3M) to perform fast summation
-    of the ~inherently~ long-ranged damped D3 correction potential.
-    The C^6AB are untangled using eigendecomposition and the method
-    re-uses the neighborlist calculated by the underlying ML potential.
-    
-    :param elements: list containing atom types for eigendecomposition,
-        must contain at least all the atom types present in the cell
-    :param cell: tensor containing vectors defining the periodic cell dimensions
-    :param pbc: 3xBool tensor to verify pbc are activated in all directions
-    :param mesh_spacing: parameter controlling mesh spacing (in Angstrom), 
-        biggest influence on accuracy
-    :param c6tol: maximum relative error for estimation of C6ref (in %), controls
-        the rank of eigendecomposition approximation
-    :param xcfunc: string specifying the xc functional used to train
-        the ML potential, needed for D3 parameters
-        
-    """
+    '''
+    species: atoms.numbers List for the configuration
+    cell: torch tensor of cell
+    pbc: atoms.pbc
+    mesh_spacing: parameter controlling mesh size for PME, the smaller the better
+    c6tol: parameter controlling accuracy of C6ref eigendecomposition, the smaller the better
+    xcfunc: underlying xc functional
+    device: torch device
+    method: either ewald or pme
+    k_cutoff: parameter controlling cutoff in the reciprocal space for Ewald, the bigger the better
+    interpolation_nodes: number of interpolation nodes used for PPME
+    verbose: print stuff or not 
+    '''
     
     def __init__(
         self,
@@ -54,66 +49,103 @@ class FastD3(torch.nn.Module):
         self.k_cutoff = k_cutoff
 
         if pbc is not None:
-            assert pbc.all(), "particle-mesh only supports 3d pbc, if you have 2d pbc, please make sure there's plenty of empty space in the third direction"
+            assert pbc.all(), "particle-mesh only supports 3d pbc"
+        
         if verbose:
             print("Assuming 3D PBC are satisfied")
+        
+        # Convert species once
         species_unique = unique(species)
-        tmp = {species_unique[i] : i for i in range(len(species_unique))}
-        converted_species = [tmp[species[i]] for i in range(len(species))]
-        self.species = torch.tensor(converted_species, dtype=torch.long, device=self.device)
+        species_map = {species_unique[i]: i for i in range(len(species_unique))}
+        converted_species = torch.tensor(
+            [species_map[s] for s in species], 
+            dtype=torch.long, 
+            device=device
+        )
+        
+        # Register as buffer so it moves with model
+        self.register_buffer('species', converted_species)
+        self.n_species = len(species_unique)
         
         self.xcfunc = xcfunc
         
-        self.angstrom_to_bohr = torch.tensor(1.8897259492972167, device=self.device)
-        self.cell = torch.from_numpy(cell.array) * self.angstrom_to_bohr
-        self.cell.to(device)
+        # Pre-compute and cache conversion factors
+        angstrom_to_bohr = 1.8897259492972167
+        self.register_buffer(
+            'angstrom_to_bohr', 
+            torch.tensor(angstrom_to_bohr, dtype=torch.float64, device=device)
+        )
         
-        self.volume = torch.abs(torch.det(self.cell)).to(self.device)
+        cell_bohr = cell * self.angstrom_to_bohr
+        self.register_buffer('cell', cell_bohr)
         
-        self.eigs, self.eigvecs = decomp(species_unique, c6tol, verbose)
-        self.eigs.to(device)
-        self.eigvecs.to(device)
+        volume = torch.abs(torch.det(cell_bohr))
+        self.register_buffer('volume', volume)
         
-        self.rcov = load_rcov()[species_unique].to(device=self.device, dtype=torch.float64)
-        self.cnref = load_cnref()[species_unique, :].to(device=self.device, dtype=torch.float64)
+        # Load and cache eigendecomposition
+        eigs, eigvecs = decomp(species_unique, c6tol, verbose)
+        eigs = eigs.to(device=device, dtype=torch.float64)
+        eigvecs = eigvecs.to(device=device, dtype=torch.float64)
+        self.register_buffer('eigs', eigs)
+        self.register_buffer('eigvecs', eigvecs)
+        self.n_rank = eigvecs.shape[1]
         
+        # Pre-reshape eigenvectors for faster access
+        n_total_rows = eigvecs.shape[0]
+        v_q_reshaped = eigvecs.view(self.n_species, 7, self.n_rank)
+        self.register_buffer('v_q_reshaped', v_q_reshaped)
         
-        # implement automatic choice from xc functional !
-        # these are just for pbe
+        # Load reference data
+        rcov = load_rcov()[species_unique].to(device=device, dtype=torch.float64)
+        cnref = load_cnref()[species_unique, :].to(device=device, dtype=torch.float64)
+        self.register_buffer('rcov', rcov)
+        self.register_buffer('cnref', cnref)
+        
+        # Pre-compute constants
+        self.register_buffer('k_cn', torch.tensor(16.0, dtype=torch.float64, device=device))
+        self.register_buffer('factor_cn', torch.tensor(4.0/3.0, dtype=torch.float64, device=device))
+        self.register_buffer('logit_scale', torch.tensor(-4.0, dtype=torch.float64, device=device))
+        
+        # D3 parameters
         params = torch.tensor([1.0, 0.7875, 0.4289, 4.4407], device=device, dtype=torch.float64)
-        
         self.potential = D3Potential(species_unique, params, device, method)
         
-        if method == 'pme':
+        # Cache self-interaction terms
+        self.register_buffer('selfcont', self.potential.selfcont)
         
-            ns_mesh = get_ns_mesh(self.cell, mesh_spacing * self.angstrom_to_bohr)
+        if method == 'pme':
+            ns_mesh = get_ns_mesh(cell_bohr, mesh_spacing * angstrom_to_bohr)
             if verbose:
-                print('Using mesh size', ns_mesh.numpy())
+                print('Using mesh size', ns_mesh)
             
             self.mesh_interpolator = MeshInterpolatorD3(
-                cell=self.cell,
+                cell=cell_bohr,
                 ns_mesh=ns_mesh,
                 interpolation_nodes=interpolation_nodes,
                 method="Lagrange"
             )
             
             self.kspace_filter = KSpaceFilterD3(
-                cell=self.cell,
+                cell=cell_bohr,
                 ns_mesh=ns_mesh,
-                kernel = self.potential,
+                kernel=self.potential,
                 fft_norm="backward",
                 ifft_norm="forward"
             )
             
-        if method == 'ewald':
-            basis_norms = torch.linalg.norm(self.cell, dim=1)
-            ns_float = k_cutoff * basis_norms / 2 / torch.pi
+        elif method == 'ewald':
+            basis_norms = torch.linalg.norm(cell_bohr, dim=1)
+            ns_float = k_cutoff * basis_norms / (2 * torch.pi)
             ns = torch.ceil(ns_float).long()
             
-            self.kvectors = generate_kvectors_for_ewald(ns=ns, cell=self.cell).to(self.device)
-            self.knorm = torch.linalg.norm(self.kvectors, dim=1)
-            self.G = self.potential.lr_from_k_sq(self.knorm)
-        
+            kvectors = generate_kvectors_for_ewald(ns=ns, cell=cell_bohr).to(device)
+            knorm = torch.linalg.norm(kvectors, dim=1)
+            G = self.potential.lr_from_k_sq(knorm)
+            
+            self.register_buffer('kvectors', kvectors)
+            self.register_buffer('knorm', knorm)
+            self.register_buffer('G', G)
+    
     def _update_cell(self, cell):
         self.cell = cell
         if self.method == 'pme':
@@ -145,113 +177,135 @@ class FastD3(torch.nn.Module):
             self.kvectors = generate_kvectors_for_ewald(ns=ns, cell=self.cell).to(self.device)
             self.knorm = torch.linalg.norm(self.kvectors, dim=1)
             self.G = self.potential.lr_from_k_sq(self.knorm)
-        
 
-    def forward(self, positions,
-                edge_index,
-                shifts, r_cut):
-        if positions.device != self.device:
-            raise ValueError(f"Device mismatch: {positions.device} vs {self.device}")
-        if edge_index.device != self.device:
-            raise ValueError(f"Device mismatch: {edge_index.device} vs {self.device}")
-        if shifts.device != self.device:
-            raise ValueError(f"Device mismatch: {shifts.device} vs {self.device}")
+    @torch.jit.export
+    def compute_cn(self, positions: torch.Tensor, edge_index: torch.Tensor, 
+                   shifts: torch.Tensor, r_cut: torch.Tensor) -> torch.Tensor:
+        """Compute coordination numbers with fused operations."""
+        n_atoms = positions.size(0)
+        source, target = edge_index
         
-        positions = self.angstrom_to_bohr * positions
-        r_cut = self.angstrom_to_bohr * r_cut
-        shifts = self.angstrom_to_bohr * shifts
+        # distance calculation
+        vec_ij = positions[target] - positions[source] + shifts
+        r_ab = torch.linalg.norm(vec_ij, dim=-1)
+        
+        # Single mask operation
+        mask = r_ab > 1e-6
+        source_m = source[mask]
+        target_m = target[mask]
+        r_ab_m = r_ab[mask]
+        
+        # covalent radius lookup
+        r_cov_sum = self.rcov[self.species[source_m]] + self.rcov[self.species[target_m]]
+        
+        # sigmoid calculations
+        inv_r = 1.0 / r_ab_m
+        #inv_r_cut = 1.0 / r_cut
+        
+        ratio = self.factor_cn * r_cov_sum
+        arg_r = -self.k_cn * (ratio * inv_r - 1.0)
+        #arg_cut = -self.k_cn * (ratio * inv_r_cut - 1.0)
+        
+        # Combined exponential operations
+        exp_r = torch.exp(arg_r)
+        #exp_cut = torch.exp(arg_cut)
+        
+        term1 = 1.0 / (1.0 + exp_r)
+        #term2 = 1.0 / (1.0 + exp_cut)
+        
+        # derivative term
+        #sigmoid_deriv = exp_cut / torch.square(1.0 + exp_cut)
+        #dist_diff = r_ab_m - r_cut
+        #prefactor = (64.0 * r_cov_sum) / (3.0 * (r_cut ** 2))
+        #term3 = dist_diff * prefactor * sigmoid_deriv
+        
+        #edge_contributions = term1 - term2 + term3
+        edge_contributions = term1
+        
+        # Scatter add
+        cn = torch.zeros(n_atoms, device=self.device, dtype=positions.dtype)
+        cn.index_add_(0, source_m, edge_contributions)
+        
+        return cn
+    
+    @torch.jit.export
+    def compute_c6_weights(self, cn: torch.Tensor) -> torch.Tensor:
+        """Compute C6 weights from coordination numbers."""
+        atom_refs = self.cnref[self.species]
+        diff = cn.unsqueeze(1) - atom_refs
+        logits = self.logit_scale * torch.square(diff)
+        
+        # Mask invalid references
+        mask = atom_refs == -1
+        logits = logits.masked_fill(mask, float('-inf'))
+        
+        return torch.softmax(logits, dim=1)
+        
+    def forward(self, positions: torch.Tensor,
+                edge_index: torch.Tensor,
+                shifts: torch.Tensor, 
+                r_cut: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass with optimized operations.
+        
+        Args:
+            positions: Atomic positions [N, 3]
+            edge_index: Edge indices [2, E]
+            shifts: Periodic shifts [E, 3]
+            r_cut: Cutoff radius
+            
+        Returns:
+            D3 dispersion energy
+        """
+        
+        positions = positions * self.angstrom_to_bohr
+        r_cut = r_cut * self.angstrom_to_bohr
+        shifts = shifts * self.angstrom_to_bohr
         
         n_atoms = positions.size(0)
         
+        # Compute coordination numbers
+        cn = self.compute_cn(positions, edge_index, shifts, r_cut)
         
-        # calculate CNs
+        # Compute weights
+        weights = self.compute_c6_weights(cn)
         
-        source, target = edge_index
-        vec_ij = positions[target] - positions[source] + shifts
-        r_ab = torch.norm(vec_ij, dim=-1)
-        mask = (r_ab > 1e-6)
-        source = source[mask]
-        target = target[mask]
-        r_ab = r_ab[mask]
-        r_cov_sum = self.rcov[self.species[source]] + self.rcov[self.species[target]]
+        # Compute C6 coefficients (optimized einsum)
+        atom_v_qs = self.v_q_reshaped[self.species]
+        c6 = torch.einsum('nk,nkr->nr', weights, atom_v_qs)
         
-        k = 16.0
-        factor = 4.0 / 3.0
-        
-        arg_r = -k * ((factor * r_cov_sum / r_ab) - 1.0)
-        term1 = 1.0 / (1.0 + torch.exp(arg_r))
-        
-        arg_cut = -k * ((factor * r_cov_sum / r_cut) - 1.0)
-        exp_cut = torch.exp(arg_cut)
-        term2 = 1.0 / (1.0 + exp_cut)
-        
-        dist_diff = r_ab - r_cut
-        prefactor = (64.0 * r_cov_sum) / (3.0 * (r_cut ** 2))
-        sigmoid_deriv = exp_cut / torch.square(1.0 + exp_cut)
-        term3 = dist_diff * prefactor * sigmoid_deriv
-        
-        edge_contributions = term1 - term2 + term3
-        cn = torch.zeros(n_atoms, device=self.device, dtype=positions.dtype)
-        cn.index_add_(0, source, edge_contributions)
-        
-        # calculate weights
-        
-        atom_refs = self.cnref[self.species]
-        diff = cn.unsqueeze(1) - atom_refs
-        logits = -4.0 * torch.square(diff)
-        
-        mask = (atom_refs == -1)
-        logits =  logits.masked_fill(mask, float('-inf'))
-        
-        weights = torch.softmax(logits, dim=1)
+        # One-hot encoding
+        onehot = torch.zeros(n_atoms, self.n_species, self.n_rank, 
+                            device=c6.device, dtype=c6.dtype)
+        onehot[torch.arange(n_atoms, device=self.device), self.species] = c6
         
         
-        # calculate C6
-        n_rank = self.eigvecs.shape[1]
-        n_total_rows = self.eigvecs.shape[0] 
-        n_species = n_total_rows // 7
-        
-        v_q_reshaped = self.eigvecs.view(n_species, 7, n_rank)
-        atom_v_qs = v_q_reshaped[self.species]
-        c6 = torch.einsum('nk, nkr -> nr', weights, atom_v_qs)
-        
-        
-        # one-hot encoding for species (since potential is species-dependent)
-        
-        onehot = torch.zeros(n_atoms, n_species, n_rank, device=c6.device, dtype=c6.dtype)
-        onehot[torch.arange(n_atoms), self.species, :] = c6
-        
-        tmp = torch.sum(torch.square(c6)*self.potential.selfcont[self.species], dim=0)
+        # Self-interaction energy (fused operations)
+        c6_sq = torch.square(c6)
+        selfcont_atoms = self.selfcont[self.species]
+        tmp = torch.sum(c6_sq * selfcont_atoms, dim=0)
         vself = torch.dot(self.eigs, tmp)
         
         if self.method == 'pme':
-        
-            # interpolate particle weights onto a mesh
+            # PME method
             
             self.mesh_interpolator.compute_weights(positions)
             rho_mesh = self.mesh_interpolator.points_to_mesh(onehot)
-            
-            # convolve with potential
             filtered_hat = self.kspace_filter.forward(rho_mesh)
-            
-            energy = torch.dot(self.eigs, filtered_hat.real)
+            energy = torch.dot(self.eigs, filtered_hat)
             
         elif self.method == 'ewald':
-            trig_args = self.kvectors @ (positions.T)
+            trig_args = torch.matmul(self.kvectors, positions.T)
             
             c = torch.cos(trig_args)
             s = torch.sin(trig_args)
-            
             ex = torch.stack([c, s], dim=0)
-            
-            sc = torch.einsum('izr, pki -> rzpk', onehot, ex)
-
-            convolved = torch.einsum('ijk, ripk, rjpk -> rijk', self.G, sc, sc)
-
-            energy = torch.dot(self.eigs, torch.sum(convolved, dim=(1, 2, 3)))
+            sc = torch.einsum('izr,pki->rzpk', onehot, ex)
+            sqrt_eigs = torch.sqrt(torch.abs(self.eigs))
+            sc_weighted = sc * sqrt_eigs.view(-1, 1, 1, 1)
+            convolved = torch.einsum('ijk,ripk,rjpk->jk', self.G, sc_weighted, sc_weighted)
+            energy = torch.sum(convolved)
         
-        energy /= (-2*self.volume)
-        energy += vself/2
+        energy = energy / (-2 * self.volume) + vself / 2
+        
         return energy
-        
-        

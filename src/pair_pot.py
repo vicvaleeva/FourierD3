@@ -78,8 +78,17 @@ class D3Potential(Potential):
         n_species = ft8.shape[0]
         # returns (n_species, n_species, nx, ny, nz) for pme, (n_species, n_species, nk) for ewald
         
+        kfilter = (ft6 + self.QzQz.view(n_species, n_species, 1, 1, 1) * ft8)
+        last_dim = kfilter.shape[-1]
+        weights = torch.full((last_dim,), 2.0, device=kfilter.device, dtype=kfilter.dtype)
+        weights[0] = 1.0
+        weights[-1] = 1.0
+            
+        k_weighted = kfilter * weights
+        k_flat = k_weighted.flatten(2)
+        
         if self.method == 'pme':
-            return (ft6 + self.QzQz.view(n_species, n_species, 1, 1, 1) * ft8).to(dtype=torch.complex128)
+            return k_flat.to(dtype=torch.complex128).permute(2, 0, 1).contiguous()
         
         return (ft6 + self.QzQz.view(n_species, n_species, 1) * ft8)
         
