@@ -48,6 +48,11 @@ class FastD3(torch.nn.Module):
         
         self.device = device
         self.method = method
+        #
+        self.mesh_spacing = mesh_spacing
+        self.interpolation_nodes = interpolation_nodes
+        self.k_cutoff = k_cutoff
+
         if pbc is not None:
             assert pbc.all(), "particle-mesh only supports 3d pbc, if you have 2d pbc, please make sure there's plenty of empty space in the third direction"
         if verbose:
@@ -109,7 +114,39 @@ class FastD3(torch.nn.Module):
             self.knorm = torch.linalg.norm(self.kvectors, dim=1)
             self.G = self.potential.lr_from_k_sq(self.knorm)
         
+    def _update_cell(self, cell):
+        self.cell = cell
+        if self.method == 'pme':
         
+            ns_mesh = get_ns_mesh(self.cell, self.mesh_spacing * self.angstrom_to_bohr)
+            if self.verbose:
+                print('Using mesh size', ns_mesh.numpy())
+            
+            self.mesh_interpolator = MeshInterpolatorD3(
+                cell=self.cell,
+                ns_mesh=ns_mesh,
+                interpolation_nodes=self.interpolation_nodes,
+                method="Lagrange"
+            )
+            
+            self.kspace_filter = KSpaceFilterD3(
+                cell=self.cell,
+                ns_mesh=ns_mesh,
+                kernel = self.potential,
+                fft_norm="backward",
+                ifft_norm="forward"
+            )
+            
+        if self.method == 'ewald':
+            basis_norms = torch.linalg.norm(self.cell, dim=1)
+            ns_float = self.k_cutoff * basis_norms / 2 / torch.pi
+            ns = torch.ceil(ns_float).long()
+            
+            self.kvectors = generate_kvectors_for_ewald(ns=ns, cell=self.cell).to(self.device)
+            self.knorm = torch.linalg.norm(self.kvectors, dim=1)
+            self.G = self.potential.lr_from_k_sq(self.knorm)
+        
+
     def forward(self, positions,
                 edge_index,
                 shifts, r_cut):
