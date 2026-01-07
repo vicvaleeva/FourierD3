@@ -54,7 +54,7 @@ for cutoff_A in [8, 10, 12, 16, 20]:
 
     d3_calc = TorchDFTD3Calculator(
         atoms=None,
-        damping="zero",
+        damping="zero", # bj
         cutoff=cutoff_bohr,
         device="cuda",
     )
