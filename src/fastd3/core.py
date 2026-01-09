@@ -1,14 +1,13 @@
 from typing import Optional, List
-from utils import decomp, load_rcov, load_cnref
-from numpy import unique
-from torchpme.lib.kvectors import get_ns_mesh, generate_kvectors_for_ewald
-import matplotlib.pyplot as plt
-import time
-from pair_pot import D3Potential
-from kspace_filter_d3 import KSpaceFilterD3
-from mesh_interpolator_d3 import MeshInterpolatorD3
 
 import torch
+from numpy import unique
+from torchpme.lib.kvectors import get_ns_mesh, generate_kvectors_for_ewald
+
+from fastd3.utils import decomp, load_rcov, load_cnref
+from fastd3.pair_pot import D3Potential
+from fastd3.kspace_filter_d3 import KSpaceFilterD3
+from fastd3.mesh_interpolator_d3 import MeshInterpolatorD3
 
 class FastD3(torch.nn.Module):
     '''
@@ -35,7 +34,7 @@ class FastD3(torch.nn.Module):
         xcfunc: str = 'pbe',
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
         method: str = 'pme',
-        interpolation_nodes: int = 4,
+        interpolation_nodes: int = 3,
         k_cutoff: float = 1.0,
         verbose = True
     ) -> None:
@@ -43,7 +42,11 @@ class FastD3(torch.nn.Module):
         
         self.device = device
         self.method = method
-        
+        #
+        self.mesh_spacing = mesh_spacing
+        self.interpolation_nodes = interpolation_nodes
+        self.k_cutoff = k_cutoff
+
         if pbc is not None:
             assert pbc.all(), "particle-mesh only supports 3d pbc"
         
@@ -87,7 +90,6 @@ class FastD3(torch.nn.Module):
         self.n_rank = eigvecs.shape[1]
         
         # Pre-reshape eigenvectors for faster access
-        n_total_rows = eigvecs.shape[0]
         v_q_reshaped = eigvecs.view(self.n_species, 7, self.n_rank)
         self.register_buffer('v_q_reshaped', v_q_reshaped)
         
@@ -110,20 +112,20 @@ class FastD3(torch.nn.Module):
         self.register_buffer('selfcont', self.potential.selfcont)
         
         if method == 'pme':
-            ns_mesh = get_ns_mesh(cell_bohr, mesh_spacing * angstrom_to_bohr)
+            self.ns_mesh = get_ns_mesh(cell_bohr, mesh_spacing * angstrom_to_bohr)
             if verbose:
-                print('Using mesh size', ns_mesh)
+                print('Using mesh size', self.ns_mesh)
             
             self.mesh_interpolator = MeshInterpolatorD3(
                 cell=cell_bohr,
-                ns_mesh=ns_mesh,
+                ns_mesh=self.ns_mesh,
                 interpolation_nodes=interpolation_nodes,
                 method="Lagrange"
             )
             
             self.kspace_filter = KSpaceFilterD3(
                 cell=cell_bohr,
-                ns_mesh=ns_mesh,
+                ns_mesh=self.ns_mesh,
                 kernel=self.potential,
                 fft_norm="backward",
                 ifft_norm="forward"
@@ -132,9 +134,9 @@ class FastD3(torch.nn.Module):
         elif method == 'ewald':
             basis_norms = torch.linalg.norm(cell_bohr, dim=1)
             ns_float = k_cutoff * basis_norms / (2 * torch.pi)
-            ns = torch.ceil(ns_float).long()
+            self.ns = torch.ceil(ns_float).long()
             
-            kvectors = generate_kvectors_for_ewald(ns=ns, cell=cell_bohr).to(device)
+            kvectors = generate_kvectors_for_ewald(ns=self.ns, cell=cell_bohr).to(device)
             knorm = torch.linalg.norm(kvectors, dim=1)
             G = self.potential.lr_from_k_sq(knorm)
             
@@ -142,6 +144,17 @@ class FastD3(torch.nn.Module):
             self.register_buffer('knorm', knorm)
             self.register_buffer('G', G)
     
+    def _update_cell(self, cell):
+        self.cell = cell
+        if self.method == 'pme':
+            self.mesh_interpolator.update(self.cell)
+            self.kspace_filter.update(self.cell)
+            
+        if self.method == 'ewald':
+            self.kvectors = generate_kvectors_for_ewald(ns=self.ns, cell=self.cell)
+            self.knorm = torch.linalg.norm(self.kvectors, dim=1)
+            self.G = self.potential.lr_from_k_sq(self.knorm)
+
     @torch.jit.export
     def compute_cn(self, positions: torch.Tensor, edge_index: torch.Tensor, 
                    shifts: torch.Tensor, r_cut: torch.Tensor) -> torch.Tensor:
