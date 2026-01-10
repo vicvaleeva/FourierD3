@@ -77,3 +77,30 @@ energy_fastd3.backward()
 forces_calc = -positions.grad*1000 # forces in meV/Å
 stress_calc = strain.grad / calc.volume * (angstrom_to_bohr)**3 # stress
 ```
+
+## ASE calculator interface
+
+To use `FastD3` with ASE
+
+```python
+import numpy as np
+from ase.build import molecule
+from fastd3 import FastD3ASECalculator
+import torch
+
+conf = molecule("C6H6", vacuum=5.0)
+conf.set_pbc(True)
+
+# the r_cut is for calculating the coordinate number
+calc = FastD3ASECalculator(
+    r_cut=6.0,
+    method="ewald",
+    device=torch.device("cpu"),
+)
+calc._build_model(conf)
+conf.calc = calc
+
+conf.get_potential_energy()
+conf.get_forces()
+conf.get_stress()
+```
