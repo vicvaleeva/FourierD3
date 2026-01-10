@@ -177,27 +177,14 @@ class FastD3(torch.nn.Module):
         
         # sigmoid calculations
         inv_r = 1.0 / r_ab_m
-        #inv_r_cut = 1.0 / r_cut
         
         ratio = self.factor_cn * r_cov_sum
         arg_r = -self.k_cn * (ratio * inv_r - 1.0)
-        #arg_cut = -self.k_cn * (ratio * inv_r_cut - 1.0)
         
         # Combined exponential operations
         exp_r = torch.exp(arg_r)
-        #exp_cut = torch.exp(arg_cut)
         
-        term1 = 1.0 / (1.0 + exp_r)
-        #term2 = 1.0 / (1.0 + exp_cut)
-        
-        # derivative term
-        #sigmoid_deriv = exp_cut / torch.square(1.0 + exp_cut)
-        #dist_diff = r_ab_m - r_cut
-        #prefactor = (64.0 * r_cov_sum) / (3.0 * (r_cut ** 2))
-        #term3 = dist_diff * prefactor * sigmoid_deriv
-        
-        #edge_contributions = term1 - term2 + term3
-        edge_contributions = term1
+        edge_contributions = 1.0 / (1.0 + exp_r)
         
         # Scatter add
         cn = torch.zeros(n_atoms, device=self.device, dtype=positions.dtype)
