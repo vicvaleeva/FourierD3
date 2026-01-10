@@ -1,0 +1,7 @@
+*.xyz
+*.out
+*.traj
+*.log
+build
+results
+src/fastd3.egg-info

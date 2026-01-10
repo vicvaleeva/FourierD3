@@ -1,9 +1,9 @@
-from torchpme.potentials import Potential
-from utils import load_sqrtQz
-
 from typing import List
 
 import torch
+from torchpme.potentials import Potential
+
+from fastd3.utils import load_sqrtQz
 
 class D3Potential(Potential):
     

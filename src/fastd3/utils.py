@@ -1,15 +1,14 @@
-from typing import List
 from pathlib import Path
+from typing import List
 
-import torch
 import numpy as np
+import torch
 from scipy.sparse.linalg import eigsh
-
 
 # load C6 reference tensor (104, 104, 7, 7)
 def load_c6ref(types: List) -> torch.Tensor:
     current_dir = Path(__file__).parent.resolve()
-    c6ref = torch.load(current_dir / '..' / 'data' / 'reference-c6.pt', weights_only=True)
+    c6ref = torch.load(current_dir / '..' / '..' / 'data' / 'reference-c6.pt', weights_only=True)
     return c6ref[types][:, types].permute(0, 2, 1, 3).reshape(len(types)*7, len(types)*7).numpy()
 
 # compute maximum relative error between reference c6 and low-rank approximation
@@ -31,12 +30,12 @@ def decomp(types: List, c6tol: float, verbose: bool):
 
 def load_sqrtQz(types: List, device) -> torch.Tensor:
     current_dir = Path(__file__).parent.resolve()
-    return torch.load(current_dir / '..' / 'data' / 'sqrtQz.pt', weights_only=True)[types].to(device)
+    return torch.load(current_dir / '..' / '..' / 'data' / 'sqrtQz.pt', weights_only=True)[types].to(device)
 
 def load_rcov() -> torch.Tensor:
     current_dir = Path(__file__).parent.resolve()
-    return torch.load(current_dir / '..' / 'data' / 'rcov.pt', weights_only=True)
+    return torch.load(current_dir / '..' / '..' /  'data' / 'rcov.pt', weights_only=True)
 
 def load_cnref() -> torch.Tensor:
     current_dir = Path(__file__).parent.resolve()
-    return torch.load(current_dir / '..' / 'data' / 'cnref.pt', weights_only=True)
+    return torch.load(current_dir / '..' /  '..' / 'data' / 'cnref.pt', weights_only=True)
