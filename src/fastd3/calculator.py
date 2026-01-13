@@ -22,14 +22,14 @@ class FastD3ASECalculator(Calculator):
     def __init__(
         self,
         r_cut=6.0,
-        method="pme",
+        method="spme",
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
         verbose = False,
         c6tol: float = 1,
         xcfunc: str = 'pbe',
         k_cutoff: float = 10.0,
         mesh_spacing: float = 1.2, # for pme
-        interpolation_nodes: int = 5, # for pme
+        interpolation_nodes: int = 4, # for pme
         **kwargs,
     ):
         super().__init__(**kwargs)
