@@ -12,15 +12,18 @@ class D3Potential(Potential):
         species: List,
         params: torch.tensor,
         device,
-        method: str
+        method: str,
+        order: int = None
     ):
         super().__init__()
+        self.device = device
+        self.order = order
         self.species = species
         self.params = params.to(device)
         self.method = method
         self.sqrtQz = load_sqrtQz(species, device=device)
         self.QzQz = torch.outer(self.sqrtQz, self.sqrtQz)
-        if self.method == 'pme':
+        if self.method == 'pme' or self.method == 'spme':
             self.Rab = (params[2]*torch.sqrt(3*self.QzQz) + params[3]).view(len(species), len(species), 1, 1, 1)
         elif self.method == 'ewald':
             self.Rab = (params[2]*torch.sqrt(3*self.QzQz) + params[3]).view(len(species), len(species), 1)
@@ -79,6 +82,26 @@ class D3Potential(Potential):
         # returns (n_species, n_species, nx, ny, nz) for pme, (n_species, n_species, nk) for ewald
         
         kfilter = (ft6 + self.QzQz.view(n_species, n_species, 1, 1, 1) * ft8)
+        
+        if self.method == 'spme':
+            mesh_nx = kfilter.shape[-3]
+            mesh_ny = kfilter.shape[-2]
+            mesh_nz = (kfilter.shape[-1] - 1) * 2
+            
+            miller_x = torch.fft.fftfreq(mesh_nx, d=1.0 / mesh_nx, device = self.device)
+            miller_y = torch.fft.fftfreq(mesh_ny, d=1.0 / mesh_nx, device = self.device)
+            miller_z = torch.fft.rfftfreq(mesh_nz, d=1.0 / mesh_nz, device = self.device)
+            
+            sinc_x = torch.sinc(miller_x / mesh_nx)
+            sinc_y = torch.sinc(miller_y / mesh_ny)
+            sinc_z = torch.sinc(miller_z / mesh_nz)
+            
+            sc = sinc_x[:, None, None] * sinc_y[None, :, None] * sinc_z[None, None, :]
+            sc = torch.pow(sc, 2*self.order)
+            sc = torch.where(sc < 1e-10, 1e-10, sc)
+            kfilter /= sc
+            
+        
         last_dim = kfilter.shape[-1]
         weights = torch.full((last_dim,), 2.0, device=kfilter.device, dtype=kfilter.dtype)
         weights[0] = 1.0
@@ -87,7 +110,7 @@ class D3Potential(Potential):
         k_weighted = kfilter * weights
         k_flat = k_weighted.flatten(2)
         
-        if self.method == 'pme':
+        if self.method == 'pme' or self.method == 'spme':
             return k_flat.to(dtype=torch.complex128).permute(2, 0, 1).contiguous()
         
         return (ft6 + self.QzQz.view(n_species, n_species, 1) * ft8)

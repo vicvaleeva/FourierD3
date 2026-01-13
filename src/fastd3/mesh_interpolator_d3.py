@@ -3,6 +3,18 @@ import torch
 from torchpme.lib.mesh_interpolator import MeshInterpolator
 
 class MeshInterpolatorD3(MeshInterpolator):
+    
+    def _compute_1d_weights(self, x: torch.Tensor) -> torch.Tensor:
+        if self.method == 'Euler':
+            return self._compute_1d_weights_Euler(x)
+        if self.method == "Lagrange":
+            return self._compute_1d_weights_Lagrange(x)
+        raise ValueError("Only `method` `Lagrange` and `Euler` are allowed")
+    
+    @torch.jit.export
+    def _compute_1d_weights_Euler(self, x: torch.Tensor) -> torch.Tensor:
+        return self._compute_1d_weights_P3M(x)
+    
     @torch.jit.export
     def points_to_mesh(self, particle_weights: torch.Tensor) -> torch.Tensor:
         if particle_weights.device != self._device:
