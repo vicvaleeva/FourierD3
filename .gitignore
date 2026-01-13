@@ -1,7 +1,8 @@
-*.xyz
+examples/results/*
+src/fastd3.egg-info
+src/fastd3/__pycache__
+
 *.out
 *.traj
 *.log
 build
-results
-src/fastd3.egg-info

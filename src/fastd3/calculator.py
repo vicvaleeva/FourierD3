@@ -23,8 +23,13 @@ class FastD3ASECalculator(Calculator):
         self,
         r_cut=6.0,
         method="pme",
-        device=None,
-        verbose=False,
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+        verbose = False,
+        c6tol: float = 1,
+        xcfunc: str = 'pbe',
+        k_cutoff: float = 1.0,
+        mesh_spacing: float = 1.2, # for pme
+        interpolation_nodes: int = 4, # for pme
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -36,7 +41,16 @@ class FastD3ASECalculator(Calculator):
 
         self.angstrom_to_bohr = 1.8897259492972167
         self.HARTREE_TO_EV = 27.21138505
+        self.k_cutoff = k_cutoff
+        self.xcfunc = xcfunc
+        self.c6tol = c6tol
+        self.method = method
 
+        # not useful for method = 'ewald'
+        self.mesh_spacing = mesh_spacing
+        self.interpolation_nodes = interpolation_nodes
+
+        # placeholder
         self._model = None
 
     def _update_cell(self, cell):
@@ -47,9 +61,15 @@ class FastD3ASECalculator(Calculator):
             species=atoms.numbers,
             cell=torch.tensor(atoms.cell.array, device=self.device),
             pbc=torch.tensor(atoms.pbc, device=self.device),
+            # 
+            mesh_spacing=self.mesh_spacing,
+            c6tol=self.c6tol,
+            xcfunc=self.xcfunc,
+            device = self.device,
             method=self.method,
+            interpolation_nodes=self.interpolation_nodes,
+            k_cutoff = self.k_cutoff,
             verbose=self.verbose,
-            device=self.device
         )
 
     # ideally this reuse nlist from the MLIP but for now let's keep it this for benchmarking
