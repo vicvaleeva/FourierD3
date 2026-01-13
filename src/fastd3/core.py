@@ -29,13 +29,13 @@ class FastD3(torch.nn.Module):
         species: List,
         cell: torch.tensor,
         pbc: Optional[torch.tensor] = None,
-        mesh_spacing: float = 1.2,
+        mesh_spacing: float = 0.3,
         c6tol: float = 1,
         xcfunc: str = 'pbe',
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
         method: str = 'pme',
-        interpolation_nodes: int = 3,
-        k_cutoff: float = 1.0,
+        interpolation_nodes: int = 4,
+        k_cutoff: float = 10.0,
         verbose = True
     ) -> None:
         super().__init__()
@@ -106,16 +106,25 @@ class FastD3(torch.nn.Module):
         
         # D3 parameters
         params = torch.tensor([1.0, 0.7875, 0.4289, 4.4407], device=device, dtype=torch.float64)
-        self.potential = D3Potential(species_unique, params, device, method)
+        self.potential = D3Potential(species_unique, params, device, method, order=interpolation_nodes)
         
         # Cache self-interaction terms
         self.register_buffer('selfcont', self.potential.selfcont)
         
-        if method == 'pme':
+        if method == 'pme' or method == 'spme':
             self.ns_mesh = get_ns_mesh(cell_bohr, mesh_spacing * angstrom_to_bohr)
             if verbose:
                 print('Using mesh size', self.ns_mesh)
+                
+            self.kspace_filter = KSpaceFilterD3(
+                cell=cell_bohr,
+                ns_mesh=self.ns_mesh,
+                kernel=self.potential,
+                fft_norm="backward",
+                ifft_norm="forward"
+            )
             
+        if method == 'pme':
             self.mesh_interpolator = MeshInterpolatorD3(
                 cell=cell_bohr,
                 ns_mesh=self.ns_mesh,
@@ -123,12 +132,12 @@ class FastD3(torch.nn.Module):
                 method="Lagrange"
             )
             
-            self.kspace_filter = KSpaceFilterD3(
+        if method == 'spme':
+            self.mesh_interpolator = MeshInterpolatorD3(
                 cell=cell_bohr,
                 ns_mesh=self.ns_mesh,
-                kernel=self.potential,
-                fft_norm="backward",
-                ifft_norm="forward"
+                interpolation_nodes=interpolation_nodes,
+                method="Euler"
             )
             
         elif method == 'ewald':
@@ -146,7 +155,7 @@ class FastD3(torch.nn.Module):
     
     def _update_cell(self, cell):
         self.cell = cell
-        if self.method == 'pme':
+        if self.method == 'pme' or self.method == 'spme':
             self.mesh_interpolator.update(self.cell)
             self.kspace_filter.update(self.cell)
             
@@ -250,9 +259,7 @@ class FastD3(torch.nn.Module):
         tmp = torch.sum(c6_sq * selfcont_atoms, dim=0)
         vself = torch.dot(self.eigs, tmp)
         
-        if self.method == 'pme':
-            # PME method
-            
+        if self.method == 'pme' or self.method == 'spme':
             self.mesh_interpolator.compute_weights(positions)
             rho_mesh = self.mesh_interpolator.points_to_mesh(onehot)
             filtered_hat = self.kspace_filter.forward(rho_mesh)
