@@ -27,9 +27,9 @@ class FastD3ASECalculator(Calculator):
         verbose = False,
         c6tol: float = 1,
         xcfunc: str = 'pbe',
-        k_cutoff: float = 1.0,
+        k_cutoff: float = 10.0,
         mesh_spacing: float = 1.2, # for pme
-        interpolation_nodes: int = 4, # for pme
+        interpolation_nodes: int = 5, # for pme
         **kwargs,
     ):
         super().__init__(**kwargs)

@@ -18,7 +18,7 @@ class FastD3(torch.nn.Module):
     c6tol: parameter controlling accuracy of C6ref eigendecomposition, the smaller the better
     xcfunc: underlying xc functional
     device: torch device
-    method: either ewald or pme
+    method: either ewald or pme or spme
     k_cutoff: parameter controlling cutoff in the reciprocal space for Ewald, the bigger the better
     interpolation_nodes: number of interpolation nodes used for PPME
     verbose: print stuff or not 
@@ -29,11 +29,11 @@ class FastD3(torch.nn.Module):
         species: List,
         cell: torch.tensor,
         pbc: Optional[torch.tensor] = None,
-        mesh_spacing: float = 0.3,
+        mesh_spacing: float = 1.2,
         c6tol: float = 1,
         xcfunc: str = 'pbe',
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-        method: str = 'pme',
+        method: str = 'spme',
         interpolation_nodes: int = 4,
         k_cutoff: float = 10.0,
         verbose = True
@@ -137,7 +137,7 @@ class FastD3(torch.nn.Module):
                 cell=cell_bohr,
                 ns_mesh=self.ns_mesh,
                 interpolation_nodes=interpolation_nodes,
-                method="Euler"
+                method="P3M"
             )
             
         elif method == 'ewald':
