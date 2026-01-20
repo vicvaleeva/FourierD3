@@ -98,7 +98,7 @@ class FastD3ASECalculator(Calculator):
 
     def calculate(self, atoms=None, properties=None, system_changes=all_changes):
         super().calculate(atoms, properties, system_changes)
-        cell = torch.tensor(atoms.cell.array, dtype=torch.float64, device=self.device)
+        cell = torch.tensor(atoms.cell.array * self.angstrom_to_bohr, dtype=torch.float64, device=self.device)
 
         if "cell" in system_changes:
             self._update_cell(cell)
