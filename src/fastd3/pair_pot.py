@@ -111,7 +111,7 @@ class D3Potential(Potential):
         k_flat = k_weighted.flatten(2)
         
         if self.method == 'pme' or self.method == 'spme':
-            return k_flat.to(dtype=torch.complex128).permute(2, 0, 1).contiguous()
+            return k_flat.to(dtype=torch.complex64).permute(2, 0, 1).contiguous()
         
         return (ft6 + self.QzQz.view(n_species, n_species, 1) * ft8)
         

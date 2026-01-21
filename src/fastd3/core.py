@@ -72,7 +72,7 @@ class FastD3(torch.nn.Module):
         angstrom_to_bohr = 1.8897259492972167
         self.register_buffer(
             'angstrom_to_bohr', 
-            torch.tensor(angstrom_to_bohr, dtype=torch.float64, device=device)
+            torch.tensor(angstrom_to_bohr, dtype=torch.float32, device=device)
         )
         
         cell_bohr = cell * self.angstrom_to_bohr
@@ -83,8 +83,8 @@ class FastD3(torch.nn.Module):
         
         # Load and cache eigendecomposition
         eigs, eigvecs = decomp(species_unique, c6tol, verbose)
-        eigs = eigs.to(device=device, dtype=torch.float64)
-        eigvecs = eigvecs.to(device=device, dtype=torch.float64)
+        eigs = eigs.to(device=device, dtype=torch.float32)
+        eigvecs = eigvecs.to(device=device, dtype=torch.float32)
         self.register_buffer('eigs', eigs)
         self.register_buffer('eigvecs', eigvecs)
         self.n_rank = eigvecs.shape[1]
@@ -94,18 +94,18 @@ class FastD3(torch.nn.Module):
         self.register_buffer('v_q_reshaped', v_q_reshaped)
         
         # Load reference data
-        rcov = load_rcov()[species_unique].to(device=device, dtype=torch.float64)
-        cnref = load_cnref()[species_unique, :].to(device=device, dtype=torch.float64)
+        rcov = load_rcov()[species_unique].to(device=device, dtype=torch.float32)
+        cnref = load_cnref()[species_unique, :].to(device=device, dtype=torch.float32)
         self.register_buffer('rcov', rcov)
         self.register_buffer('cnref', cnref)
         
         # Pre-compute constants
-        self.register_buffer('k_cn', torch.tensor(16.0, dtype=torch.float64, device=device))
-        self.register_buffer('factor_cn', torch.tensor(4.0/3.0, dtype=torch.float64, device=device))
-        self.register_buffer('logit_scale', torch.tensor(-4.0, dtype=torch.float64, device=device))
+        self.register_buffer('k_cn', torch.tensor(16.0, dtype=torch.float32, device=device))
+        self.register_buffer('factor_cn', torch.tensor(4.0/3.0, dtype=torch.float32, device=device))
+        self.register_buffer('logit_scale', torch.tensor(-4.0, dtype=torch.float32, device=device))
         
         # D3 parameters
-        params = torch.tensor([1.0, 0.7875, 0.4289, 4.4407], device=device, dtype=torch.float64)
+        params = torch.tensor([1.0, 0.7875, 0.4289, 4.4407], device=device, dtype=torch.float32)
         self.potential = D3Potential(species_unique, params, device, method, order=interpolation_nodes)
         
         # Cache self-interaction terms
@@ -168,6 +168,7 @@ class FastD3(torch.nn.Module):
     def compute_cn(self, positions: torch.Tensor, edge_index: torch.Tensor, 
                    shifts: torch.Tensor, r_cut: torch.Tensor) -> torch.Tensor:
         """Compute coordination numbers with fused operations."""
+        positions = positions.to(dtype=torch.float32)
         n_atoms = positions.size(0)
         source, target = edge_index
         
@@ -196,7 +197,7 @@ class FastD3(torch.nn.Module):
         edge_contributions = 1.0 / (1.0 + exp_r)
         
         # Scatter add
-        cn = torch.zeros(n_atoms, device=self.device, dtype=positions.dtype)
+        cn = torch.zeros(n_atoms, device=self.device, dtype=torch.float32)
         cn.index_add_(0, source_m, edge_contributions)
         
         return cn
@@ -249,7 +250,7 @@ class FastD3(torch.nn.Module):
         
         # One-hot encoding
         onehot = torch.zeros(n_atoms, self.n_species, self.n_rank, 
-                            device=c6.device, dtype=c6.dtype)
+                            device=c6.device, dtype=torch.float32)
         onehot[torch.arange(n_atoms, device=self.device), self.species] = c6
         
         

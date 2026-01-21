@@ -35,7 +35,7 @@ class MeshInterpolatorD3(MeshInterpolator):
 
         rho_flat_accum = torch.zeros(
             (nx * ny * nz, n_channels), 
-            dtype=self._dtype, 
+            dtype=torch.float32, 
             device=self._device
         )
         

@@ -59,7 +59,7 @@ class FastD3ASECalculator(Calculator):
     def _build_model(self, atoms):
         self._model = FastD3(
             species=atoms.numbers,
-            cell=torch.tensor(atoms.cell.array, device=self.device),
+            cell=torch.tensor(atoms.cell.array, device=self.device, dtype=torch.float32),
             pbc=torch.tensor(atoms.pbc, device=self.device),
             # 
             mesh_spacing=self.mesh_spacing,
@@ -90,7 +90,7 @@ class FastD3ASECalculator(Calculator):
 
         unit_shifts = torch.tensor(
             unit_shifts,
-            dtype=torch.float64,
+            dtype=torch.float32,
             device=self.device,
         )
 
@@ -98,12 +98,12 @@ class FastD3ASECalculator(Calculator):
 
     def calculate(self, atoms=None, properties=None, system_changes=all_changes):
         super().calculate(atoms, properties, system_changes)
-        cell = torch.tensor(atoms.cell.array * self.angstrom_to_bohr, dtype=torch.float64, device=self.device)
+        cell = torch.tensor(atoms.cell.array * self.angstrom_to_bohr, dtype=torch.float32, device=self.device)
 
         if "cell" in system_changes:
             self._update_cell(cell)
 
-        strain = torch.zeros(3, 3, dtype=torch.float64, device=self.device)
+        strain = torch.zeros(3, 3, dtype=torch.float32, device=self.device)
         strain.requires_grad_(True)
 
         strained_cell = cell + torch.einsum("ab,Ab->Aa", strain, cell)
@@ -112,7 +112,7 @@ class FastD3ASECalculator(Calculator):
 
         positions = torch.tensor(
             atoms.positions,
-            dtype=torch.float64,
+            dtype=torch.float32,
             device=self.device,
             requires_grad=True,
         )
@@ -121,7 +121,7 @@ class FastD3ASECalculator(Calculator):
         edge_index, unit_shifts = self._build_graph(atoms)
         strained_shifts = torch.matmul(unit_shifts, strained_cell)
 
-        r_cut_t = torch.tensor(self.r_cut, dtype=torch.float64, device=self.device)
+        r_cut_t = torch.tensor(self.r_cut, dtype=torch.float32, device=self.device)
 
         # compute energy
         energy = self._model(
