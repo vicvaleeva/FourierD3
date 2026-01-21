@@ -39,7 +39,7 @@ class FastD3ASECalculator(Calculator):
         self.method = method
         self.verbose = verbose
 
-        self.angstrom_to_bohr = 1.8897259492972167
+        self.angstrom_to_bohr = (1 / 0.52917726)
         self.HARTREE_TO_EV = 27.21138505
         self.k_cutoff = k_cutoff
         self.xcfunc = xcfunc
@@ -98,8 +98,8 @@ class FastD3ASECalculator(Calculator):
 
     def calculate(self, atoms=None, properties=None, system_changes=all_changes):
         super().calculate(atoms, properties, system_changes)
-        cell = torch.tensor(atoms.cell.array * self.angstrom_to_bohr, dtype=torch.float32, device=self.device)
-
+        cell = torch.tensor(atoms.cell.array, dtype=torch.float32, device=self.device)
+        
         if "cell" in system_changes:
             self._update_cell(cell)
 
@@ -142,7 +142,6 @@ class FastD3ASECalculator(Calculator):
         stress = (
             strain.grad
             / self._model.volume
-            * (self.angstrom_to_bohr ** 3)
         )
 
         # -------------------------

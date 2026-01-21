@@ -69,7 +69,7 @@ class FastD3(torch.nn.Module):
         self.xcfunc = xcfunc
         
         # Pre-compute and cache conversion factors
-        angstrom_to_bohr = 1.8897259492972167
+        angstrom_to_bohr = (1 / 0.52917726)
         self.register_buffer(
             'angstrom_to_bohr', 
             torch.tensor(angstrom_to_bohr, dtype=torch.float32, device=device)
@@ -154,7 +154,8 @@ class FastD3(torch.nn.Module):
             self.register_buffer('G', G)
     
     def _update_cell(self, cell):
-        self.cell = cell
+        self.cell = cell * self.angstrom_to_bohr
+        self.volume = torch.abs(torch.det(self.cell))
         if self.method == 'pme' or self.method == 'spme':
             self.mesh_interpolator.update(self.cell)
             self.kspace_filter.update(self.cell)
@@ -166,7 +167,7 @@ class FastD3(torch.nn.Module):
 
     @torch.jit.export
     def compute_cn(self, positions: torch.Tensor, edge_index: torch.Tensor, 
-                   shifts: torch.Tensor, r_cut: torch.Tensor) -> torch.Tensor:
+                   shifts: torch.Tensor) -> torch.Tensor:
         """Compute coordination numbers with fused operations."""
         positions = positions.to(dtype=torch.float32)
         n_atoms = positions.size(0)
@@ -217,8 +218,7 @@ class FastD3(torch.nn.Module):
         
     def forward(self, positions: torch.Tensor,
                 edge_index: torch.Tensor,
-                shifts: torch.Tensor, 
-                r_cut: torch.Tensor) -> torch.Tensor:
+                shifts: torch.Tensor) -> torch.Tensor:
         """
         Forward pass with optimized operations.
         
@@ -226,20 +226,18 @@ class FastD3(torch.nn.Module):
             positions: Atomic positions [N, 3]
             edge_index: Edge indices [2, E]
             shifts: Periodic shifts [E, 3]
-            r_cut: Cutoff radius
             
         Returns:
             D3 dispersion energy
         """
         
         positions = positions * self.angstrom_to_bohr
-        r_cut = r_cut * self.angstrom_to_bohr
         shifts = shifts * self.angstrom_to_bohr
         
         n_atoms = positions.size(0)
         
         # Compute coordination numbers
-        cn = self.compute_cn(positions, edge_index, shifts, r_cut)
+        cn = self.compute_cn(positions, edge_index, shifts)
         
         # Compute weights
         weights = self.compute_c6_weights(cn)
