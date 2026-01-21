@@ -121,14 +121,12 @@ class FastD3ASECalculator(Calculator):
         edge_index, unit_shifts = self._build_graph(atoms)
         strained_shifts = torch.matmul(unit_shifts, strained_cell)
 
-        r_cut_t = torch.tensor(self.r_cut, dtype=torch.float32, device=self.device)
 
         # compute energy
         energy = self._model(
             strained_pos,
             edge_index,
             strained_shifts,
-            r_cut_t,
         )
         # Hartree → eV
         energy_ev = energy * self.HARTREE_TO_EV
