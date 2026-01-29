@@ -27,6 +27,7 @@ class D3Potential(Potential):
             self.Rab = (params[2]*torch.sqrt(3*self.QzQz) + params[3]).view(len(species), len(species), 1, 1, 1)
         elif self.method == 'ewald':
             self.Rab = (params[2]*torch.sqrt(3*self.QzQz) + params[3]).view(len(species), len(species), 1)
+        self.Rab2 = torch.pow(self.Rab, 2)
         self.Rab3 = torch.pow(self.Rab, 3)
         self.Rab4 = self.Rab * self.Rab3
         self.Rab5 = self.Rab * self.Rab4
@@ -54,7 +55,7 @@ class D3Potential(Potential):
         k_safe = torch.where(small, 1.0, k)
         kRab_safe = k_safe * self.Rab
         
-        ft6_small = (2*self.pi2) / (3*self.Rab3) - (self.pi2 / 18) * ksq
+        ft6_small = (2*self.pi2) / (3*self.Rab3) - (2*self.pi2*self.Rab / 9) * ksq
         
         num6 = (torch.exp(-kRab_safe) - 
                    2 * torch.exp(-kRab_safe / 2) * torch.cos(self.pi/3 + kRab_safe * self.sq3 / 2))
@@ -64,7 +65,7 @@ class D3Potential(Potential):
         ft6 = self.params[0] * torch.where(small, ft6_small, ft6_large)
         
         val0 = (self.pi2 * self.sq2 * self.sin8) / self.Rab5
-        coeff_k2 = (self.pi2 * (self.sin8 + self.cos8)) / (16 * self.sq2 * self.Rab3)
+        coeff_k2 = val0 * self.Rab2 / 6
         ft8_small = val0 - coeff_k2 * ksq
         
         exp1 = torch.exp(-kRab_safe * self.sin8)
