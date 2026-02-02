@@ -54,7 +54,26 @@ class FastD3ASECalculator(Calculator):
         self._model = None
 
     def _update_cell(self, cell):
-            self._model._update_cell(cell)
+            self._model._update_cell(cell=cell)
+            
+    def _update_cndiff(self, atoms, large_rcut = 20.0):
+        cell = torch.tensor(atoms.cell.array, dtype=torch.float32, device=self.device)
+        positions = torch.tensor(
+            atoms.positions,
+            dtype=torch.float32,
+            device=self.device,
+            requires_grad=False,
+        )
+        
+        edge_index, unit_shifts = self._build_graph(atoms, large_rcut)
+        shifts = torch.matmul(unit_shifts, cell)
+        cn_large = self._model.compute_cn(positions * self.angstrom_to_bohr, edge_index, shifts * self.angstrom_to_bohr, recalc=True)
+        
+        edge_index, unit_shifts = self._build_graph(atoms)
+        shifts = torch.matmul(unit_shifts, cell)
+        cn_small = self._model.compute_cn(positions * self.angstrom_to_bohr, edge_index, shifts * self.angstrom_to_bohr, recalc=True)
+        
+        self._model._update_cndiff(cndiff=(cn_large - cn_small))
 
     def _build_model(self, atoms):
         self._model = FastD3(
@@ -73,13 +92,16 @@ class FastD3ASECalculator(Calculator):
         )
 
     # ideally this reuse nlist from the MLIP but for now let's keep it this for benchmarking
-    def _build_graph(self, atoms):
+    def _build_graph(self, atoms, rcut = None):
+        if rcut is None:
+            rcut = self.r_cut
+            
         sender, receiver, unit_shifts = neighbour_list(
             quantities="ijS",
             pbc=atoms.pbc,
             cell=atoms.cell,
             positions=atoms.positions,
-            cutoff=self.r_cut,
+            cutoff=rcut,
         )
 
         edge_index = torch.tensor(
@@ -139,7 +161,7 @@ class FastD3ASECalculator(Calculator):
         forces = -positions.grad
         stress = (
             strain.grad
-            / self._model.volume
+            / self._model.volume * (self.angstrom_to_bohr ** 3)
         )
 
         # -------------------------

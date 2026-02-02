@@ -36,16 +36,21 @@ class FastD3(torch.nn.Module):
         method: str = 'spme',
         interpolation_nodes: int = 4,
         k_cutoff: float = 10.0,
+        cndiff: Optional[torch.tensor] = None,
         verbose = True
     ) -> None:
         super().__init__()
         
         self.device = device
         self.method = method
-        #
         self.mesh_spacing = mesh_spacing
         self.interpolation_nodes = interpolation_nodes
         self.k_cutoff = k_cutoff
+        
+        if cndiff is not None:
+            self.cndiff = cndiff.to(device)
+        else:
+            self.cndiff = None
 
         if pbc is not None:
             assert pbc.all(), "particle-mesh only supports 3d pbc"
@@ -164,10 +169,16 @@ class FastD3(torch.nn.Module):
             self.kvectors = generate_kvectors_for_ewald(ns=self.ns, cell=self.cell)
             self.knorm = torch.linalg.norm(self.kvectors, dim=1)
             self.G = self.potential.lr_from_k_sq(self.knorm)
+            
+    def _update_cndiff(self, cndiff):
+        if cndiff is not None:
+            self.cndiff = cndiff.to(self.device)
+        else:
+            self.cndiff = None
 
     @torch.jit.export
     def compute_cn(self, positions: torch.Tensor, edge_index: torch.Tensor, 
-                   shifts: torch.Tensor) -> torch.Tensor:
+                   shifts: torch.Tensor, recalc = False) -> torch.Tensor:
         """Compute coordination numbers with fused operations."""
         positions = positions.to(dtype=torch.float32)
         n_atoms = positions.size(0)
@@ -200,6 +211,9 @@ class FastD3(torch.nn.Module):
         # Scatter add
         cn = torch.zeros(n_atoms, device=self.device, dtype=torch.float32)
         cn.index_add_(0, source_m, edge_contributions)
+        
+        if self.cndiff is not None and not recalc:
+            cn += self.cndiff
         
         return cn
     

@@ -20,17 +20,22 @@ from ase.build import molecule
 from fastd3 import FastD3ASECalculator
 import torch
 
-conf = molecule("C6H6", vacuum=5.0)
+conf = molecule("C60", vacuum=5.0)
 conf.set_pbc(True)
 
-# the r_cut is for calculating the coordinate number
+# the r_cut is for calculating the coordination number
 calc = FastD3ASECalculator(
     r_cut=6.0,
-    method="ewald",
+    method="spme",
+    interpolation_nodes=5,
+    mesh_spacing=1.2,
     device=torch.device("cpu"),
 )
 calc._build_model(conf)
 conf.calc = calc
+
+# correction to coordination numbers - optional (advised to run every n frames)
+calc._update_cndiff(conf)
 
 conf.get_potential_energy()
 conf.get_forces()
