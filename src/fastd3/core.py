@@ -34,8 +34,9 @@ class FastD3(torch.nn.Module):
         xcfunc: str = 'pbe',
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
         method: str = 'spme',
-        interpolation_nodes: int = 4,
+        interpolation_nodes: int = 5,
         k_cutoff: float = 10.0,
+        r_cut: float = 6.0,
         cndiff: Optional[torch.tensor] = None,
         verbose = True
     ) -> None:
@@ -75,6 +76,7 @@ class FastD3(torch.nn.Module):
         
         # Pre-compute and cache conversion factors
         angstrom_to_bohr = (1 / 0.52917726)
+        self.r_cut = r_cut * angstrom_to_bohr
         self.register_buffer(
             'angstrom_to_bohr', 
             torch.tensor(angstrom_to_bohr, dtype=torch.float32, device=device)
@@ -105,7 +107,6 @@ class FastD3(torch.nn.Module):
         self.register_buffer('cnref', cnref)
         
         # Pre-compute constants
-        self.register_buffer('k_cn', torch.tensor(16.0, dtype=torch.float32, device=device))
         self.register_buffer('factor_cn', torch.tensor(4.0/3.0, dtype=torch.float32, device=device))
         self.register_buffer('logit_scale', torch.tensor(-4.0, dtype=torch.float32, device=device))
         
@@ -177,8 +178,8 @@ class FastD3(torch.nn.Module):
             self.cndiff = None
 
     @torch.jit.export
-    def compute_cn(self, positions: torch.Tensor, edge_index: torch.Tensor, 
-                   shifts: torch.Tensor, recalc = False) -> torch.Tensor:
+    def compute_cn_old(self, positions: torch.Tensor, edge_index: torch.Tensor, 
+                   shifts: torch.Tensor) -> torch.Tensor:
         """Compute coordination numbers with fused operations."""
         positions = positions.to(dtype=torch.float32)
         n_atoms = positions.size(0)
@@ -201,12 +202,53 @@ class FastD3(torch.nn.Module):
         inv_r = 1.0 / r_ab_m
         
         ratio = self.factor_cn * r_cov_sum
-        arg_r = -self.k_cn * (ratio * inv_r - 1.0)
+        arg_r = -16.0 * (ratio * inv_r - 1.0)
         
         # Combined exponential operations
         exp_r = torch.exp(arg_r)
         
         edge_contributions = 1.0 / (1.0 + exp_r)
+        
+        # Scatter add
+        cn = torch.zeros(n_atoms, device=self.device, dtype=torch.float32)
+        cn.index_add_(0, source_m, edge_contributions)
+        
+        return cn
+    
+    @torch.jit.export
+    def compute_cn(self, positions: torch.Tensor, edge_index: torch.Tensor, 
+                   shifts: torch.Tensor, recalc=False) -> torch.Tensor:
+        """Compute coordination numbers with fused operations."""
+        positions = positions.to(dtype=torch.float32)
+        n_atoms = positions.size(0)
+        source, target = edge_index
+        
+        # distance calculation
+        vec_ij = positions[target] - positions[source] + shifts
+        r_ab = torch.linalg.norm(vec_ij, dim=-1)
+        
+        # Single mask operation
+        mask = r_ab > 1e-6
+        source_m = source[mask]
+        target_m = target[mask]
+        r_ab_m = r_ab[mask]
+        
+        # covalent radius lookup
+        r_cov_sum = self.rcov[self.species[source_m]] + self.rcov[self.species[target_m]]
+        r1 = 0.5 * r_cov_sum + 0.5 * self.r_cut
+        # sigmoid calculations
+        inv_r = 1 / r_ab_m
+        r_ab_coeff = torch.where(r_ab_m > r1, r_ab_m, r1)
+        k_cn = 16.0 + (r_ab_coeff - r1)**2 / (self.r_cut - r_ab_coeff)**2
+        large_k_cn = k_cn > 40.0
+        k_cn = torch.where(large_k_cn, 0.0, k_cn)
+        ratio = self.factor_cn * r_cov_sum
+        arg_r = -k_cn * (ratio * inv_r - 1.0)
+        
+        # Combined exponential operations
+        exp_r = torch.exp(arg_r)
+        
+        edge_contributions = torch.where(large_k_cn, 0.0, 1.0 / (1.0 + exp_r))
         
         # Scatter add
         cn = torch.zeros(n_atoms, device=self.device, dtype=torch.float32)

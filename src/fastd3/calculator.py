@@ -8,14 +8,6 @@ from fastd3 import FastD3
 
 
 class FastD3ASECalculator(Calculator):
-    '''
-    ASE wrapper matching the FastD3 usage pattern in your example.
-
-    - neighbour_list from matscipy
-    - explicit strain tensor for stress
-    - forces from autograd
-    - Hartree → eV conversion
-    '''
 
     implemented_properties = ["energy", "forces", "stress"]
 
@@ -67,7 +59,7 @@ class FastD3ASECalculator(Calculator):
         
         edge_index, unit_shifts = self._build_graph(atoms, large_rcut)
         shifts = torch.matmul(unit_shifts, cell)
-        cn_large = self._model.compute_cn(positions * self.angstrom_to_bohr, edge_index, shifts * self.angstrom_to_bohr, recalc=True)
+        cn_large = self._model.compute_cn_old(positions * self.angstrom_to_bohr, edge_index, shifts * self.angstrom_to_bohr)
         
         edge_index, unit_shifts = self._build_graph(atoms)
         shifts = torch.matmul(unit_shifts, cell)
@@ -89,6 +81,7 @@ class FastD3ASECalculator(Calculator):
             interpolation_nodes=self.interpolation_nodes,
             k_cutoff = self.k_cutoff,
             verbose=self.verbose,
+            r_cut=self.r_cut
         )
 
     # ideally this reuse nlist from the MLIP but for now let's keep it this for benchmarking
