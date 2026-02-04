@@ -220,8 +220,8 @@ class FastD3(torch.nn.Module):
     
     @torch.jit.export
     def compute_cn(self, positions: torch.Tensor, edge_index: torch.Tensor, 
-                   shifts: torch.Tensor, recalc=False) -> torch.Tensor:
-        """Compute coordination numbers with fused operations."""
+                shifts: torch.Tensor, recalc: bool = False) -> torch.Tensor:
+        """Compute coordination numbers with numerically stable operations."""
         positions = positions.to(dtype=torch.float32)
         n_atoms = positions.size(0)
         source, target = edge_index
@@ -230,7 +230,7 @@ class FastD3(torch.nn.Module):
         vec_ij = positions[target] - positions[source] + shifts
         r_ab = torch.linalg.norm(vec_ij, dim=-1)
         
-        # Single mask operation
+        # Single mask operation (filters self-loops/close contacts)
         mask = r_ab > 1e-6
         source_m = source[mask]
         target_m = target[mask]
@@ -239,19 +239,27 @@ class FastD3(torch.nn.Module):
         # covalent radius lookup
         r_cov_sum = self.rcov[self.species[source_m]] + self.rcov[self.species[target_m]]
         r1 = 0.5 * r_cov_sum + 0.5 * self.r_cut
-        # sigmoid calculations
-        inv_r = 1 / r_ab_m
+        
+        # --- Fix 1: Safe Division ---
         r_ab_coeff = torch.where(r_ab_m > r1, r_ab_m, r1)
-        k_cn = 16.0 + (r_ab_coeff - r1)**2 / (self.r_cut - r_ab_coeff)**2
-        large_k_cn = k_cn > 40.0
-        k_cn = torch.where(large_k_cn, 0.0, k_cn)
+        
+        # Add epsilon to denominator or clamp to avoid div-by-zero at r_cut
+        # We use a small epsilon (1e-6) to ensure strict positivity
+        denom = (self.r_cut - r_ab_coeff).pow(2) + 1e-6
+        
+        k_cn = 16.0 + (r_ab_coeff - r1)**2 / denom
+        
+        # --- Fix 2: Stable Sigmoid ---
+        inv_r = 1.0 / r_ab_m
         ratio = self.factor_cn * r_cov_sum
+        
+        # Calculate argument for sigmoid
+        # Note: arg_r calculation is unchanged, but we feed it into sigmoid differently
         arg_r = -k_cn * (ratio * inv_r - 1.0)
         
-        # Combined exponential operations
-        exp_r = torch.exp(arg_r)
-        
-        edge_contributions = torch.where(large_k_cn, 0.0, 1.0 / (1.0 + exp_r))
+        # Use torch.sigmoid(-arg_r) instead of 1 / (1 + exp(arg_r))
+        # This prevents overflow when arg_r is large positive
+        edge_contributions = torch.sigmoid(-arg_r)
         
         # Scatter add
         cn = torch.zeros(n_atoms, device=self.device, dtype=torch.float32)
@@ -296,7 +304,7 @@ class FastD3(torch.nn.Module):
         n_atoms = positions.size(0)
         
         # Compute coordination numbers
-        cn = self.compute_cn_old(positions, edge_index, shifts)
+        cn = self.compute_cn(positions, edge_index, shifts)
         
         # Compute weights
         weights = self.compute_c6_weights(cn)

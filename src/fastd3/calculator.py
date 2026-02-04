@@ -71,7 +71,7 @@ class FastD3ASECalculator(Calculator):
         
         edge_index, unit_shifts = self._build_graph(atoms)
         shifts = torch.matmul(unit_shifts, cell)
-        cn_small = self._model.compute_cn_old(positions * self.angstrom_to_bohr, edge_index, shifts * self.angstrom_to_bohr, recalc=True)
+        cn_small = self._model.compute_cn(positions * self.angstrom_to_bohr, edge_index, shifts * self.angstrom_to_bohr, recalc=True)
         
         self._model._update_cndiff(cndiff=(cn_large - cn_small))
 
