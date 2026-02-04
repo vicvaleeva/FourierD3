@@ -179,7 +179,7 @@ class FastD3(torch.nn.Module):
 
     @torch.jit.export
     def compute_cn_old(self, positions: torch.Tensor, edge_index: torch.Tensor, 
-                   shifts: torch.Tensor) -> torch.Tensor:
+                   shifts: torch.Tensor, recalc=False) -> torch.Tensor:
         """Compute coordination numbers with fused operations."""
         positions = positions.to(dtype=torch.float32)
         n_atoms = positions.size(0)
@@ -212,6 +212,9 @@ class FastD3(torch.nn.Module):
         # Scatter add
         cn = torch.zeros(n_atoms, device=self.device, dtype=torch.float32)
         cn.index_add_(0, source_m, edge_contributions)
+        
+        if self.cndiff is not None and not recalc:
+            cn += self.cndiff
         
         return cn
     
@@ -293,7 +296,7 @@ class FastD3(torch.nn.Module):
         n_atoms = positions.size(0)
         
         # Compute coordination numbers
-        cn = self.compute_cn(positions, edge_index, shifts)
+        cn = self.compute_cn_old(positions, edge_index, shifts)
         
         # Compute weights
         weights = self.compute_c6_weights(cn)
