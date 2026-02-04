@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from ase.calculators.calculator import Calculator, all_changes
 from matscipy.neighbours import neighbour_list
@@ -54,9 +55,32 @@ class FastD3ASECalculator(Calculator):
         self._model = None
 
     def _update_cell(self, cell):
-            self._model._update_cell(cell=cell)
+        self._model._update_cell(cell=cell)
             
-    def _update_cndiff(self, atoms, large_rcut = 20.0):
+
+    def _get_cn_correction_coeffs(self, cn_small, cn_large, numbers):
+        unique_numbers = torch.unique(numbers)
+        c1 = torch.ones(len(unique_numbers), dtype=torch.float32, device=self.device)
+        c0 = torch.zeros(len(unique_numbers), dtype=torch.float32, device=self.device)
+        
+        for i in range(len(unique_numbers)):
+            n = unique_numbers[i]
+            mask = (numbers == n)
+            
+            cn_small_n = cn_small[mask]
+            cn_large_n = cn_large[mask]
+            
+            ones = torch.ones_like(cn_small_n)
+            A = torch.stack([cn_small_n, ones], dim=1)
+            
+            sol = torch.linalg.lstsq(A, cn_large_n.unsqueeze(1)).solution
+            
+            c1[i] = sol[0].item()
+            c0[i] = sol[1].item()
+            
+        return torch.stack([c0, c1], dim=1)
+            
+    def _calc_cn(self, atoms, large_rcut = 20.0):
         cell = torch.tensor(atoms.cell.array, dtype=torch.float32, device=self.device)
         positions = torch.tensor(
             atoms.positions,
@@ -73,7 +97,7 @@ class FastD3ASECalculator(Calculator):
         shifts = torch.matmul(unit_shifts, cell)
         cn_small = self._model.compute_cn(positions * self.angstrom_to_bohr, edge_index, shifts * self.angstrom_to_bohr, recalc=True)
         
-        self._model._update_cndiff(cndiff=(cn_large - cn_small))
+        return cn_small, cn_large
 
     def _build_model(self, atoms):
         self._model = FastD3(
@@ -91,6 +115,11 @@ class FastD3ASECalculator(Calculator):
             verbose=self.verbose,
             r_cut=self.r_cut
         )
+        
+        cn_small, cn_large = self._calc_cn(atoms)
+        cncorr = self._get_cn_correction_coeffs(cn_small, cn_large, torch.tensor(atoms.numbers))
+        self._model._update_cndiff(cncorr)
+        
 
     # ideally this reuse nlist from the MLIP but for now let's keep it this for benchmarking
     def _build_graph(self, atoms, rcut = None):

@@ -37,7 +37,7 @@ class FastD3(torch.nn.Module):
         interpolation_nodes: int = 5,
         k_cutoff: float = 10.0,
         r_cut: float = 6.0,
-        cndiff: Optional[torch.tensor] = None,
+        cncorr: Optional[torch.tensor] = None,
         verbose = True
     ) -> None:
         super().__init__()
@@ -48,10 +48,10 @@ class FastD3(torch.nn.Module):
         self.interpolation_nodes = interpolation_nodes
         self.k_cutoff = k_cutoff
         
-        if cndiff is not None:
-            self.cndiff = cndiff.to(device)
+        if cncorr is not None:
+            self.cncorr = cncorr.to(device)
         else:
-            self.cndiff = None
+            self.cncorr = None
 
         if pbc is not None:
             assert pbc.all(), "particle-mesh only supports 3d pbc"
@@ -171,11 +171,11 @@ class FastD3(torch.nn.Module):
             self.knorm = torch.linalg.norm(self.kvectors, dim=1)
             self.G = self.potential.lr_from_k_sq(self.knorm)
             
-    def _update_cndiff(self, cndiff):
-        if cndiff is not None:
-            self.cndiff = cndiff.to(self.device)
+    def _update_cndiff(self, cncorr):
+        if cncorr is not None:
+            self.cncorr = cncorr.to(self.device)
         else:
-            self.cndiff = None
+            self.cncorr = None
 
     @torch.jit.export
     def compute_cn_old(self, positions: torch.Tensor, edge_index: torch.Tensor, 
@@ -213,8 +213,8 @@ class FastD3(torch.nn.Module):
         cn = torch.zeros(n_atoms, device=self.device, dtype=torch.float32)
         cn.index_add_(0, source_m, edge_contributions)
         
-        if self.cndiff is not None and not recalc:
-            cn += self.cndiff
+        if self.cncorr is not None and not recalc:
+            cn = self.cncorr[self.species, 1] * cn + self.cncorr[self.species, 0]
         
         return cn
     
@@ -255,8 +255,8 @@ class FastD3(torch.nn.Module):
         cn = torch.zeros(n_atoms, device=self.device, dtype=torch.float32)
         cn.index_add_(0, source_m, edge_contributions)
         
-        if self.cndiff is not None and not recalc:
-            cn += self.cndiff
+        if self.cncorr is not None and not recalc:
+            cn = self.cncorr[self.species, 1] * cn + self.cncorr[self.species, 0]
         
         return cn
     
