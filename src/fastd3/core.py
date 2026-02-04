@@ -240,28 +240,18 @@ class FastD3(torch.nn.Module):
         r_cov_sum = self.rcov[self.species[source_m]] + self.rcov[self.species[target_m]]
         r1 = 0.5 * r_cov_sum + 0.5 * self.r_cut
         
-        # --- Fix 1: Safe Division ---
         r_ab_coeff = torch.where(r_ab_m > r1, r_ab_m, r1)
         
-        # Add epsilon to denominator or clamp to avoid div-by-zero at r_cut
-        # We use a small epsilon (1e-6) to ensure strict positivity
         denom = (self.r_cut - r_ab_coeff).pow(2) + 1e-6
         
         k_cn = 16.0 + (r_ab_coeff - r1)**2 / denom
         
-        # --- Fix 2: Stable Sigmoid ---
         inv_r = 1.0 / r_ab_m
         ratio = self.factor_cn * r_cov_sum
         
-        # Calculate argument for sigmoid
-        # Note: arg_r calculation is unchanged, but we feed it into sigmoid differently
         arg_r = -k_cn * (ratio * inv_r - 1.0)
-        
-        # Use torch.sigmoid(-arg_r) instead of 1 / (1 + exp(arg_r))
-        # This prevents overflow when arg_r is large positive
         edge_contributions = torch.sigmoid(-arg_r)
         
-        # Scatter add
         cn = torch.zeros(n_atoms, device=self.device, dtype=torch.float32)
         cn.index_add_(0, source_m, edge_contributions)
         
