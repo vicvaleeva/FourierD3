@@ -118,7 +118,7 @@ class FastD3ASECalculator(Calculator):
         
         #cn_small, cn_large = self._calc_cn(atoms)
         #cncorr = self._get_cn_correction_coeffs(cn_small, cn_large, torch.tensor(atoms.numbers))
-        #self._model._update_cndiff(cncorr)
+        #self._model._update_cncorr(cncorr)
         
 
     # ideally this reuse nlist from the MLIP but for now let's keep it this for benchmarking

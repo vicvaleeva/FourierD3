@@ -171,7 +171,7 @@ class FastD3(torch.nn.Module):
             self.knorm = torch.linalg.norm(self.kvectors, dim=1)
             self.G = self.potential.lr_from_k_sq(self.knorm)
             
-    def _update_cndiff(self, cncorr):
+    def _update_cncorr(self, cncorr):
         if cncorr is not None:
             self.cncorr = cncorr.to(self.device)
         else:
