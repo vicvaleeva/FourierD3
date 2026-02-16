@@ -157,10 +157,7 @@ class FastD3ASECalculator(Calculator):
 
         strained_cell = cell + torch.einsum("ab,Ab->Aa", strain, cell)
         
-        if "cell" in system_changes:
-            self._update_cell(strained_cell)
-
-        # self._build_model(atoms, strained_cell)
+        self._update_cell(strained_cell)
 
         positions = torch.tensor(
             atoms.positions,
