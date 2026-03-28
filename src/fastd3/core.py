@@ -4,7 +4,7 @@ import torch
 from numpy import unique
 from torchpme.lib.kvectors import get_ns_mesh, generate_kvectors_for_ewald
 
-from fastd3.utils import decomp, load_rcov, load_cnref
+from fastd3.utils import decomp, load_rcov, load_cnref, safe_det_3x3
 from fastd3.pair_pot import D3Potential
 from fastd3.kspace_filter_d3 import KSpaceFilterD3
 from fastd3.mesh_interpolator_d3 import MeshInterpolatorD3
@@ -27,12 +27,13 @@ class FastD3(torch.nn.Module):
     def __init__(
         self,
         species: List,
-        cell: torch.tensor,
+        cell,
         pbc: Optional[torch.tensor] = None,
         mesh_spacing: float = 1.2,
         c6tol: float = 1,
         xcfunc: str = 'pbe',
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+        dtype = torch.float32, 
         method: str = 'spme',
         interpolation_nodes: int = 5,
         k_cutoff: float = 10.0,
@@ -43,6 +44,7 @@ class FastD3(torch.nn.Module):
         super().__init__()
         
         self.device = device
+        self.dtype = dtype
         self.method = method
         self.mesh_spacing = mesh_spacing
         self.interpolation_nodes = interpolation_nodes
@@ -79,19 +81,21 @@ class FastD3(torch.nn.Module):
         self.r_cut = r_cut * angstrom_to_bohr
         self.register_buffer(
             'angstrom_to_bohr', 
-            torch.tensor(angstrom_to_bohr, dtype=torch.float64, device=device)
+            torch.tensor(angstrom_to_bohr, dtype=dtype, device=device)
         )
+        
+        cell = torch.tensor(cell, device=self.device, dtype=dtype)
         
         cell_bohr = cell * self.angstrom_to_bohr
         self.register_buffer('cell', cell_bohr)
         
-        volume = torch.abs(torch.det(cell_bohr))
+        volume = torch.abs(safe_det_3x3(cell_bohr))
         self.register_buffer('volume', volume)
         
         # Load and cache eigendecomposition
-        eigs, eigvecs = decomp(species_unique, c6tol, verbose)
-        eigs = eigs.to(device=device, dtype=torch.float64)
-        eigvecs = eigvecs.to(device=device, dtype=torch.float64)
+        eigs, eigvecs = decomp(species_unique, c6tol, verbose, dtype=self.dtype)
+        eigs = eigs.to(device=device, dtype=dtype)
+        eigvecs = eigvecs.to(device=device, dtype=dtype)
         self.register_buffer('eigs', eigs)
         self.register_buffer('eigvecs', eigvecs)
         self.n_rank = eigvecs.shape[1]
@@ -101,17 +105,17 @@ class FastD3(torch.nn.Module):
         self.register_buffer('v_q_reshaped', v_q_reshaped)
         
         # Load reference data
-        rcov = load_rcov()[species_unique].to(device=device, dtype=torch.float64)
-        cnref = load_cnref()[species_unique, :].to(device=device, dtype=torch.float64)
+        rcov = load_rcov()[species_unique].to(device=device, dtype=dtype)
+        cnref = load_cnref()[species_unique, :].to(device=device, dtype=dtype)
         self.register_buffer('rcov', rcov)
         self.register_buffer('cnref', cnref)
         
         # Pre-compute constants
-        self.register_buffer('factor_cn', torch.tensor(4.0/3.0, dtype=torch.float64, device=device))
-        self.register_buffer('logit_scale', torch.tensor(-4.0, dtype=torch.float64, device=device))
+        self.register_buffer('factor_cn', torch.tensor(4.0/3.0, dtype=dtype, device=device))
+        self.register_buffer('logit_scale', torch.tensor(-4.0, dtype=dtype, device=device))
         
         # D3 parameters
-        params = torch.tensor([1.0, 0.7875, 0.4289, 4.4407], device=device, dtype=torch.float64)
+        params = torch.tensor([1.0, 0.7875, 0.4289, 4.4407], device=device, dtype=dtype)
         self.potential = D3Potential(species_unique, params, device, method, order=interpolation_nodes)
         
         # Cache self-interaction terms
@@ -161,7 +165,7 @@ class FastD3(torch.nn.Module):
     
     def _update_cell(self, cell):
         self.cell = cell * self.angstrom_to_bohr
-        self.volume = torch.abs(torch.det(self.cell))
+        self.volume = torch.abs(safe_det_3x3(self.cell))
         if self.method == 'pme' or self.method == 'spme':
             self.mesh_interpolator.update(self.cell)
             self.kspace_filter.update(self.cell)
@@ -181,7 +185,7 @@ class FastD3(torch.nn.Module):
     def compute_cn_old(self, positions: torch.Tensor, edge_index: torch.Tensor, 
                    shifts: torch.Tensor, recalc=False) -> torch.Tensor:
         """Compute coordination numbers with fused operations."""
-        positions = positions.to(dtype=torch.float64)
+        positions = positions.to(dtype=self.dtype)
         n_atoms = positions.size(0)
         source, target = edge_index
         
@@ -210,7 +214,7 @@ class FastD3(torch.nn.Module):
         edge_contributions = 1.0 / (1.0 + exp_r)
         
         # Scatter add
-        cn = torch.zeros(n_atoms, device=self.device, dtype=torch.float64)
+        cn = torch.zeros(n_atoms, device=self.device, dtype=self.dtype)
         cn.index_add_(0, source_m, edge_contributions)
         
         if self.cncorr is not None and not recalc:
@@ -222,7 +226,7 @@ class FastD3(torch.nn.Module):
     def compute_cn(self, positions: torch.Tensor, edge_index: torch.Tensor, 
                 shifts: torch.Tensor, recalc: bool = False) -> torch.Tensor:
         """Compute coordination numbers with numerically stable operations."""
-        positions = positions.to(dtype=torch.float64)
+        positions = positions.to(dtype=self.dtype)
         n_atoms = positions.size(0)
         source, target = edge_index
         
@@ -252,7 +256,7 @@ class FastD3(torch.nn.Module):
         arg_r = -k_cn * (ratio * inv_r - 1.0)
         edge_contributions = torch.sigmoid(-arg_r)
         
-        cn = torch.zeros(n_atoms, device=self.device, dtype=torch.float64)
+        cn = torch.zeros(n_atoms, device=self.device, dtype=self.dtype)
         cn.index_add_(0, source_m, edge_contributions)
         
         if self.cncorr is not None and not recalc:
@@ -308,7 +312,7 @@ class FastD3(torch.nn.Module):
 
         onehot = torch.zeros(n_atoms, self.n_species, self.n_rank, 
                             device=c6.device, 
-                            dtype=torch.float64).index_put(
+                            dtype=self.dtype).index_put(
                                 (batch_idx, self.species), 
                                 c6
                             )
@@ -322,7 +326,7 @@ class FastD3(torch.nn.Module):
         
         if self.method == 'pme' or self.method == 'spme':
             self.mesh_interpolator.compute_weights(positions)
-            rho_mesh = self.mesh_interpolator.points_to_mesh(onehot)
+            rho_mesh = self.mesh_interpolator.points_to_mesh(onehot, dtype=self.dtype)
             filtered_hat = self.kspace_filter.forward(rho_mesh)
             energy = torch.dot(self.eigs, filtered_hat)
             

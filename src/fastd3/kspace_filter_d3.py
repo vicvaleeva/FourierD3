@@ -3,6 +3,8 @@ import torch
 from torchpme.lib.kspace_filter import KSpaceFilter
 from torchpme.lib.kvectors import _generate_kvectors
 
+from fastd3.utils import safe_inv_3x3
+
 class KSpaceFilterD3(KSpaceFilter):
     
     def forward(self, mesh_values: torch.Tensor) -> torch.Tensor:
@@ -30,6 +32,7 @@ class KSpaceFilterD3(KSpaceFilter):
         
         return filter_hat
     
+    @torch.jit.export
     def _prep_kvectors(self, cell, ns_mesh):
         if cell is not None:
             if cell.shape != (3, 3):

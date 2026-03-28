@@ -1,10 +1,56 @@
 import torch
-
+from typing import Optional
 from torchpme.lib.mesh_interpolator import MeshInterpolator
 
+from fastd3.utils import safe_inv_3x3
+
 class MeshInterpolatorD3(MeshInterpolator):
+    
     @torch.jit.export
-    def points_to_mesh(self, particle_weights: torch.Tensor) -> torch.Tensor:
+    def update(
+        self,
+        cell: Optional[torch.Tensor] = None,
+        ns_mesh: Optional[torch.Tensor] = None,
+    ) -> None:
+        """
+        Update buffers and derived attributes of the instance.
+
+        Call this to reuse a ``MeshInterpolator`` object when the ``cell`` parameters or
+        the mesh resolution changes. If neither ``cell`` nor ``ns_mesh`` are passed
+        there is nothing to be done.
+
+        :param cell: torch.tensor of shape ``(3, 3)``, where ``cell[i]`` is the i-th basis
+            vector of the unit cell
+        :param ns_mesh: toch.tensor of shape ``(3,)`` Number of mesh points to use along
+            each of the three axes
+        """
+        if cell is not None:
+            if cell.shape != (3, 3):
+                raise ValueError(
+                    f"cell of shape {list(cell.shape)} should be of shape (3, 3)"
+                )
+            self.cell = cell
+            self.inverse_cell = cell.clone()
+            self._dtype = cell.dtype
+            self._device = cell.device
+
+            self.inverse_cell = safe_inv_3x3(cell)
+
+        if ns_mesh is not None:
+            if ns_mesh.shape != (3,):
+                raise ValueError(
+                    f"shape {list(ns_mesh.shape)} of `ns_mesh` has to be (3,)"
+                )
+            self.ns_mesh = ns_mesh
+
+        if self.cell.device != self.ns_mesh.device:
+            raise ValueError(
+                "`cell` and `ns_mesh` are on different devices, got "
+                f"{self.cell.device} and {self.ns_mesh.device}"
+            )
+    
+    @torch.jit.export
+    def points_to_mesh(self, particle_weights: torch.Tensor, dtype) -> torch.Tensor:
         if particle_weights.device != self._device:
             raise ValueError(f"Device mismatch: {particle_weights.device} vs {self._device}")
         
@@ -35,7 +81,7 @@ class MeshInterpolatorD3(MeshInterpolator):
 
         rho_flat_accum = torch.zeros(
             (nx * ny * nz, n_channels), 
-            dtype=torch.float64, 
+            dtype=dtype, 
             device=self._device
         )
         

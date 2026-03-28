@@ -31,6 +31,7 @@ class FastD3ASECalculator(Calculator):
         k_cutoff: float = 10.0,
         mesh_spacing: float = 1.2, # for pme
         interpolation_nodes: int = 4, # for pme
+        dtype = torch.float32,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -50,7 +51,7 @@ class FastD3ASECalculator(Calculator):
         # not useful for method = 'ewald'
         self.mesh_spacing = mesh_spacing
         self.interpolation_nodes = interpolation_nodes
-
+        self.dtype= dtype
         # placeholder
         self._model = None
 
@@ -58,10 +59,10 @@ class FastD3ASECalculator(Calculator):
         self._model._update_cell(cell=cell)
             
 
-    def _get_cn_correction_coeffs(self, cn_small, cn_large, numbers):
+    def _get_cn_correction_coeffs(self, cn_small, cn_large, numbers, dtype):
         unique_numbers = torch.unique(numbers)
-        c1 = torch.ones(len(unique_numbers), dtype=torch.float64, device=self.device)
-        c0 = torch.zeros(len(unique_numbers), dtype=torch.float64, device=self.device)
+        c1 = torch.ones(len(unique_numbers), dtype=dtype, device=self.device)
+        c0 = torch.zeros(len(unique_numbers), dtype=dtype, device=self.device)
         
         for i in range(len(unique_numbers)):
             n = unique_numbers[i]
@@ -81,10 +82,10 @@ class FastD3ASECalculator(Calculator):
         return torch.stack([c0, c1], dim=1)
             
     def _calc_cn(self, atoms, large_rcut = 20.0):
-        cell = torch.tensor(atoms.cell.array, dtype=torch.float64, device=self.device)
+        cell = torch.tensor(atoms.cell.array, dtype=torch.float32, device=self.device)
         positions = torch.tensor(
             atoms.positions,
-            dtype=torch.float64,
+            dtype=dtype,
             device=self.device,
             requires_grad=False,
         )
@@ -102,9 +103,8 @@ class FastD3ASECalculator(Calculator):
     def _build_model(self, atoms):
         self._model = FastD3(
             species=atoms.numbers,
-            cell=torch.tensor(atoms.cell.array, device=self.device, dtype=torch.float64),
+            cell=atoms.cell.array,
             pbc=torch.tensor(atoms.pbc, device=self.device),
-            # 
             mesh_spacing=self.mesh_spacing,
             c6tol=self.c6tol,
             xcfunc=self.xcfunc,
@@ -113,7 +113,8 @@ class FastD3ASECalculator(Calculator):
             interpolation_nodes=self.interpolation_nodes,
             k_cutoff = self.k_cutoff,
             verbose=self.verbose,
-            r_cut=self.r_cut
+            r_cut=self.r_cut,
+            dtype=self.dtype
         )
         
         #cn_small, cn_large = self._calc_cn(atoms)
@@ -142,7 +143,7 @@ class FastD3ASECalculator(Calculator):
 
         unit_shifts = torch.tensor(
             unit_shifts,
-            dtype=torch.float64,
+            dtype=self.dtype,
             device=self.device,
         )
 
@@ -150,9 +151,9 @@ class FastD3ASECalculator(Calculator):
 
     def calculate(self, atoms=None, properties=None, system_changes=all_changes):
         super().calculate(atoms, properties, system_changes)
-        cell = torch.tensor(atoms.cell.array, dtype=torch.float64, device=self.device)
+        cell = torch.tensor(atoms.cell.array, dtype=self.dtype, device=self.device)
 
-        strain = torch.zeros(3, 3, dtype=torch.float64, device=self.device)
+        strain = torch.zeros(3, 3, dtype=self.dtype, device=self.device)
         strain.requires_grad_(True)
 
         strained_cell = cell + torch.einsum("ab,Ab->Aa", strain, cell)
@@ -161,7 +162,7 @@ class FastD3ASECalculator(Calculator):
 
         positions = torch.tensor(
             atoms.positions,
-            dtype=torch.float64,
+            dtype=self.dtype,
             device=self.device,
             requires_grad=True,
         )

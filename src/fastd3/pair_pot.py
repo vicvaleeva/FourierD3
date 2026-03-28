@@ -13,7 +13,8 @@ class D3Potential(Potential):
         params: torch.tensor,
         device,
         method: str,
-        order: int = None
+        order: int = None,
+        dtype = torch.float32
     ):
         super().__init__()
         self.device = device
@@ -40,6 +41,7 @@ class D3Potential(Potential):
         self.sin8 = torch.sin(self.pi / 8)
         self.cos8 = torch.cos(self.pi / 8)
         self.thresh = torch.tensor(1e-15, device=device)
+        self.dtype = dtype
         
         diag6i = 1 / torch.diagonal(self.Rab6)
         diag8i = 1 / torch.diagonal(self.Rab8)
@@ -111,8 +113,10 @@ class D3Potential(Potential):
         k_weighted = kfilter * weights
         k_flat = k_weighted.flatten(2)
         
+        complex_dtype = torch.complex128 if self.dtype == torch.float64 else torch.complex64
+        
         if self.method == 'pme' or self.method == 'spme':
-            return k_flat.to(dtype=torch.complex128).permute(2, 0, 1).contiguous()
+            return k_flat.to(dtype=complex_dtype).permute(2, 0, 1).contiguous()
         
         return (ft6 + self.QzQz.view(n_species, n_species, 1) * ft8)
         
