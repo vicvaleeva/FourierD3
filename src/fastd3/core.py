@@ -225,39 +225,36 @@ class FastD3(torch.nn.Module):
     @torch.jit.export
     def compute_cn(self, positions: torch.Tensor, edge_index: torch.Tensor, 
                 shifts: torch.Tensor, recalc: bool = False) -> torch.Tensor:
-        """Compute coordination numbers with numerically stable operations."""
         positions = positions.to(dtype=self.dtype)
         n_atoms = positions.size(0)
         source, target = edge_index
         
-        # distance calculation
         vec_ij = positions[target] - positions[source] + shifts
         r_ab = torch.linalg.norm(vec_ij, dim=-1)
         
-        # Single mask operation (filters self-loops/close contacts)
-        mask = r_ab > 1e-6
-        source_m = source[mask]
-        target_m = target[mask]
-        r_ab_m = r_ab[mask]
+        r_ab_safe = torch.clamp(r_ab, min=1e-6)
         
-        # covalent radius lookup
-        r_cov_sum = self.rcov[self.species[source_m]] + self.rcov[self.species[target_m]]
+        r_cov_sum = self.rcov[self.species[source]] + self.rcov[self.species[target]]
         r1 = 0.5 * r_cov_sum + 0.5 * self.r_cut
         
-        r_ab_coeff = torch.where(r_ab_m > r1, r_ab_m, r1)
-        
+        r_ab_coeff = torch.where(r_ab_safe > r1, r_ab_safe, r1)
         denom = (self.r_cut - r_ab_coeff).pow(2) + 1e-6
-        
         k_cn = 16.0 + (r_ab_coeff - r1)**2 / denom
         
-        inv_r = 1.0 / r_ab_m
+        inv_r = 1.0 / r_ab_safe
         ratio = self.factor_cn * r_cov_sum
         
         arg_r = -k_cn * (ratio * inv_r - 1.0)
         edge_contributions = torch.sigmoid(-arg_r)
         
+        edge_contributions = torch.where(
+            r_ab > 1e-6, 
+            edge_contributions, 
+            torch.tensor(0.0, dtype=self.dtype, device=self.device)
+        )
+        
         cn = torch.zeros(n_atoms, device=self.device, dtype=self.dtype)
-        cn.index_add_(0, source_m, edge_contributions)
+        cn.index_add_(0, source, edge_contributions)
         
         if self.cncorr is not None and not recalc:
             cn = self.cncorr[self.species, 1] * cn + self.cncorr[self.species, 0]
