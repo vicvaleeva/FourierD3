@@ -34,9 +34,6 @@ calc = FastD3ASECalculator(
 calc._build_model(conf)
 conf.calc = calc
 
-# correction to coordination numbers - optional (advised to run every n frames)
-calc._update_cndiff(conf)
-
 conf.get_potential_energy()
 conf.get_forces()
 conf.get_stress()
