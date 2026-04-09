@@ -35,6 +35,7 @@ class FastD3(torch.nn.Module):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
         dtype = torch.float32, 
         method: str = 'spme',
+        params = None,
         interpolation_nodes: int = 5,
         k_cutoff: float = 10.0,
         r_cut: float = 6.0,
