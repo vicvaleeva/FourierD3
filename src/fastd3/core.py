@@ -115,7 +115,12 @@ class FastD3(torch.nn.Module):
         self.register_buffer('logit_scale', torch.tensor(-4.0, dtype=dtype, device=device))
         
         # D3 parameters
-        params = torch.tensor([1.0, 0.7875, 0.4289, 4.4407], device=device, dtype=dtype)
+        if params is not None:
+            params = torch.tensor(params, device=device, dtype=dtype)
+        elif xcfunc == 'pbe':
+            params = torch.tensor([1.0, 0.7875, 0.4289, 4.4407], device=device, dtype=dtype)
+        else:
+            raise NotImplementedError
         self.potential = D3Potential(species_unique, params, device, method, order=interpolation_nodes)
         
         # Cache self-interaction terms
