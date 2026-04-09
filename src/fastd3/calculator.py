@@ -26,6 +26,7 @@ class FastD3ASECalculator(Calculator):
         method="spme",
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
         verbose = False,
+        params = None,
         c6tol: float = 1,
         xcfunc: str = 'pbe',
         k_cutoff: float = 10.0,
@@ -40,6 +41,7 @@ class FastD3ASECalculator(Calculator):
         self.r_cut = float(r_cut)
         self.method = method
         self.verbose = verbose
+        self.params = params
 
         self.angstrom_to_bohr = (1 / 0.52917726)
         self.HARTREE_TO_EV = 27.21138505
@@ -59,53 +61,13 @@ class FastD3ASECalculator(Calculator):
         self._model._update_cell(cell=cell)
             
 
-    def _get_cn_correction_coeffs(self, cn_small, cn_large, numbers, dtype):
-        unique_numbers = torch.unique(numbers)
-        c1 = torch.ones(len(unique_numbers), dtype=dtype, device=self.device)
-        c0 = torch.zeros(len(unique_numbers), dtype=dtype, device=self.device)
-        
-        for i in range(len(unique_numbers)):
-            n = unique_numbers[i]
-            mask = (numbers == n)
-            
-            cn_small_n = cn_small[mask]
-            cn_large_n = cn_large[mask]
-            
-            ones = torch.ones_like(cn_small_n)
-            A = torch.stack([cn_small_n, ones], dim=1)
-            
-            sol = torch.linalg.lstsq(A, cn_large_n.unsqueeze(1)).solution
-            
-            c1[i] = sol[0].item()
-            c0[i] = sol[1].item()
-            
-        return torch.stack([c0, c1], dim=1)
-            
-    def _calc_cn(self, atoms, large_rcut = 20.0):
-        cell = torch.tensor(atoms.cell.array, dtype=torch.float32, device=self.device)
-        positions = torch.tensor(
-            atoms.positions,
-            dtype=dtype,
-            device=self.device,
-            requires_grad=False,
-        )
-        
-        edge_index, unit_shifts = self._build_graph(atoms, large_rcut)
-        shifts = torch.matmul(unit_shifts, cell)
-        cn_large = self._model.compute_cn_old(positions * self.angstrom_to_bohr, edge_index, shifts * self.angstrom_to_bohr, recalc=True)
-        
-        edge_index, unit_shifts = self._build_graph(atoms)
-        shifts = torch.matmul(unit_shifts, cell)
-        cn_small = self._model.compute_cn(positions * self.angstrom_to_bohr, edge_index, shifts * self.angstrom_to_bohr, recalc=True)
-        
-        return cn_small, cn_large
-
     def _build_model(self, atoms):
         self._model = FastD3(
             species=atoms.numbers,
             cell=atoms.cell.array,
             pbc=torch.tensor(atoms.pbc, device=self.device),
             mesh_spacing=self.mesh_spacing,
+            params=self.params,
             c6tol=self.c6tol,
             xcfunc=self.xcfunc,
             device = self.device,
@@ -117,9 +79,6 @@ class FastD3ASECalculator(Calculator):
             dtype=self.dtype
         )
         
-        #cn_small, cn_large = self._calc_cn(atoms)
-        #cncorr = self._get_cn_correction_coeffs(cn_small, cn_large, torch.tensor(atoms.numbers))
-        #self._model._update_cncorr(cncorr)
         
 
     # ideally this reuse nlist from the MLIP but for now let's keep it this for benchmarking
