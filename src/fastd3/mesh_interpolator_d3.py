@@ -90,3 +90,38 @@ class MeshInterpolatorD3(MeshInterpolator):
         rho_mesh = rho_flat_accum.t().contiguous().view(n_species, n_rank, nx, ny, nz)
         
         return rho_mesh
+    
+    @torch.jit.export
+    def mesh_to_points(self, mesh_values: torch.Tensor, dtype) -> torch.Tensor:
+        """Adjoint of points_to_mesh: interpolate a mesh field back to atom positions."""
+        if mesh_values.dim() != 5:
+            raise ValueError("mesh_values must be (n_species, n_rank, nx, ny, nz)")
+
+        n_species, n_rank, nx, ny, nz = mesh_values.shape
+        n_channels = n_species * n_rank
+
+        w_x = self.interpolation_weights[self.x_shifts, :, 0]
+        w_y = self.interpolation_weights[self.y_shifts, :, 1]
+        w_z = self.interpolation_weights[self.z_shifts, :, 2]
+        w_geo = (w_x * w_y * w_z).t()  # (n_atoms, n_nodes)
+
+        idx_x = self.x_indices.t()
+        idx_y = self.y_indices.t()
+        idx_z = self.z_indices.t()
+        linear_indices = (idx_z + nz * (idx_y + ny * idx_x)).flatten()  # (n_atoms * n_nodes,)
+
+        n_atoms = w_geo.shape[0]
+        n_nodes = w_geo.shape[1]
+
+        # Reshape mesh to match the layout used in points_to_mesh:
+        # (n_species, n_rank, nx, ny, nz) -> (n_channels, nx*ny*nz) -> (nx*ny*nz, n_channels)
+        mesh_flat = mesh_values.reshape(n_channels, nx * ny * nz).t()
+
+        # Gather mesh values at each (atom, node) pair
+        gathered = mesh_flat[linear_indices, :]           # (n_atoms * n_nodes, n_channels)
+        gathered = gathered.view(n_atoms, n_nodes, n_channels)
+
+        # Weighted sum over nodes: adjoint of the scatter in points_to_mesh
+        output = (w_geo.unsqueeze(2) * gathered).sum(dim=1)  # (n_atoms, n_channels)
+
+        return output.view(n_atoms, n_species, n_rank)

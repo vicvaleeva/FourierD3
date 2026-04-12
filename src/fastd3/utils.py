@@ -42,6 +42,14 @@ def load_cnref() -> torch.Tensor:
     current_dir = Path(__file__).parent.resolve()
     return torch.load(current_dir / '..' /  '..' / 'data' / 'cnref.pt', weights_only=True)
 
+def load_en() -> torch.Tensor:
+    current_dir = Path(__file__).parent.resolve()
+    return torch.load(current_dir / '..' / '..' / 'data' / 'en.pt', weights_only=True)
+
+def load_rcov_cn() -> torch.Tensor:
+    current_dir = Path(__file__).parent.resolve()
+    return torch.load(current_dir / '..' / '..' /  'data' / 'rcov_cn.pt', weights_only=True)
+
 def safe_det_3x3(m: torch.Tensor) -> torch.Tensor:
     c00 = m[1,1]*m[2,2] - m[1,2]*m[2,1]
     c10 = m[1,2]*m[2,0] - m[1,0]*m[2,2]

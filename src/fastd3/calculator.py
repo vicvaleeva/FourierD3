@@ -29,9 +29,10 @@ class FastD3ASECalculator(Calculator):
         params = None,
         c6tol: float = 1,
         xcfunc: str = 'pbe',
+        cnfunc='smooth_cut',
         k_cutoff: float = 10.0,
         mesh_spacing: float = 1.2, # for pme
-        interpolation_nodes: int = 4, # for pme
+        interpolation_nodes: int = 5, # for pme
         dtype = torch.float32,
         **kwargs,
     ):
@@ -47,6 +48,7 @@ class FastD3ASECalculator(Calculator):
         self.HARTREE_TO_EV = 27.21138505
         self.k_cutoff = k_cutoff
         self.xcfunc = xcfunc
+        self.cnfunc = cnfunc
         self.c6tol = c6tol
         self.method = method
 
@@ -70,6 +72,7 @@ class FastD3ASECalculator(Calculator):
             params=self.params,
             c6tol=self.c6tol,
             xcfunc=self.xcfunc,
+            cnfunc=self.cnfunc,
             device = self.device,
             method=self.method,
             interpolation_nodes=self.interpolation_nodes,
@@ -125,18 +128,23 @@ class FastD3ASECalculator(Calculator):
             device=self.device,
             requires_grad=True,
         )
-
-        strained_pos = positions + torch.einsum("ab,ib->ia", strain, positions)
-        edge_index, unit_shifts = self._build_graph(atoms)
-        strained_shifts = torch.matmul(unit_shifts, strained_cell)
+        
+        if self.cnfunc == 'smooth_cut':
+            strained_pos = positions + torch.einsum("ab,ib->ia", strain, positions)
+            edge_index, unit_shifts = self._build_graph(atoms)
+            strained_shifts = torch.matmul(unit_shifts, strained_cell)
 
 
         # compute energy
-        energy = self._model(
-            strained_pos,
-            edge_index,
-            strained_shifts,
-        )
+        if self.cnfunc == 'smooth_cut':
+            energy = self._model(
+                strained_pos,
+                edge_index,
+                strained_shifts,
+            )
+            
+        if self.cnfunc == 'd4':
+            energy = self._model(strained_pos)
         # Hartree → eV
         energy_ev = energy * self.HARTREE_TO_EV
 

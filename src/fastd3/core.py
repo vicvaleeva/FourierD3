@@ -5,8 +5,8 @@ from numpy import unique
 from torchpme.lib.kvectors import get_ns_mesh, generate_kvectors_for_ewald
 
 from fastd3.utils import decomp, load_rcov, load_cnref, safe_det_3x3
-from fastd3.pair_pot import D3Potential
-from fastd3.kspace_filter_d3 import KSpaceFilterD3
+from fastd3.pair_pot import D3Potential, CNPotential
+from fastd3.kspace_filter_d3 import KSpaceFilterD3, KSpaceFilterCN
 from fastd3.mesh_interpolator_d3 import MeshInterpolatorD3
 
 class FastD3(torch.nn.Module):
@@ -17,6 +17,7 @@ class FastD3(torch.nn.Module):
     mesh_spacing: parameter controlling mesh size for PME, the smaller the better
     c6tol: parameter controlling accuracy of C6ref eigendecomposition, the smaller the better
     xcfunc: underlying xc functional
+    cnfunc: function for CN calculation, options: 'smooth_cut', 'd4'
     device: torch device
     method: either ewald or pme or spme
     k_cutoff: parameter controlling cutoff in the reciprocal space for Ewald, the bigger the better
@@ -36,6 +37,7 @@ class FastD3(torch.nn.Module):
         dtype = torch.float32, 
         method: str = 'spme',
         params = None,
+        cnfunc = 'smooth_cut',
         interpolation_nodes: int = 5,
         k_cutoff: float = 10.0,
         r_cut: float = 6.0,
@@ -76,6 +78,7 @@ class FastD3(torch.nn.Module):
         self.n_species = len(species_unique)
         
         self.xcfunc = xcfunc
+        self.cnfunc = cnfunc
         
         # Pre-compute and cache conversion factors
         angstrom_to_bohr = (1 / 0.52917726)
@@ -123,6 +126,9 @@ class FastD3(torch.nn.Module):
         else:
             raise NotImplementedError
         self.potential = D3Potential(species_unique, params, device, method, order=interpolation_nodes)
+        if self.cnfunc == 'd4':
+            self.cn_potential = CNPotential(species_unique, device, method, order=interpolation_nodes, dtype=dtype)
+            self.register_buffer('cn_selfcont', self.cn_potential.selfcont)
         
         # Cache self-interaction terms
         self.register_buffer('selfcont', self.potential.selfcont)
@@ -139,6 +145,15 @@ class FastD3(torch.nn.Module):
                 fft_norm="backward",
                 ifft_norm="forward"
             )
+            
+            if self.cn_func == 'd4':
+                self.kspace_filter_cn = KSpaceFilterCN(
+                    cell=cell_bohr,
+                    ns_mesh=self.ns_mesh,
+                    kernel=self.cn_potential,
+                    fft_norm="backward",
+                    ifft_norm="forward"
+                )
             
         if method == 'pme':
             self.mesh_interpolator = MeshInterpolatorD3(
@@ -164,6 +179,9 @@ class FastD3(torch.nn.Module):
             kvectors = generate_kvectors_for_ewald(ns=self.ns, cell=cell_bohr).to(device)
             knorm = torch.linalg.norm(kvectors, dim=1)
             G = self.potential.lr_from_k_sq(knorm)
+            if self.cnfunc =='d4':
+                G_cn = self.cn_potential.lr_from_k_sq(knorm)
+                self.register_buffer('G_cn', G_cn)
             
             self.register_buffer('kvectors', kvectors)
             self.register_buffer('knorm', knorm)
@@ -175,11 +193,16 @@ class FastD3(torch.nn.Module):
         if self.method == 'pme' or self.method == 'spme':
             self.mesh_interpolator.update(self.cell)
             self.kspace_filter.update(self.cell)
+            if self.cnfunc == 'd4':
+                self.kspace_filter_cn.update(self.cell)
+                
             
         if self.method == 'ewald':
             self.kvectors = generate_kvectors_for_ewald(ns=self.ns, cell=self.cell)
             self.knorm = torch.linalg.norm(self.kvectors, dim=1)
             self.G = self.potential.lr_from_k_sq(self.knorm)
+            if self.cnfunc == 'd4':
+                self.G_cn = self.cn_potential.lr_from_k_sq(self.knorm)
             
     def _update_cncorr(self, cncorr):
         if cncorr is not None:
@@ -229,7 +252,7 @@ class FastD3(torch.nn.Module):
         return cn
     
     @torch.jit.export
-    def compute_cn(self, positions: torch.Tensor, edge_index: torch.Tensor, 
+    def compute_cn_smooth(self, positions: torch.Tensor, edge_index: torch.Tensor, 
                 shifts: torch.Tensor, recalc: bool = False) -> torch.Tensor:
         positions = positions.to(dtype=self.dtype)
         n_atoms = positions.size(0)
@@ -268,6 +291,34 @@ class FastD3(torch.nn.Module):
         return cn
     
     @torch.jit.export
+    def compute_cn_d4(self, positions: torch.Tensor, ex: torch.Tensor = None, nk = None) -> torch.Tensor:
+        n_atoms = positions.shape[0]
+        # One-hot charges: atom i contributes 1.0 in its species slot.
+        cn_charges = torch.zeros(n_atoms, self.n_species, 1, device=self.device, dtype=self.dtype)
+        cn_charges[torch.arange(n_atoms, device=self.device), self.species, 0] = 1.0
+        if self.method in ('pme', 'spme'):
+            rho_mesh = self.mesh_interpolator.points_to_mesh(cn_charges, dtype=self.dtype).squeeze(1)
+            # (n_species, nx, ny, nz)
+
+            phi_mesh = self.kspace_filter_cn.forward(rho_mesh).unsqueeze(1)
+            # (n_species, 1, nx, ny, nz)
+
+            phi_atoms = self.mesh_interpolator.mesh_to_points(phi_mesh, dtype=self.dtype).squeeze(-1)
+            # (n_atoms, n_species)
+
+        else:  # ewald
+            # Structure factor per species: (2, nk, n_species)
+            S = torch.mm(ex.reshape(2 * nk, n_atoms), self.one_hot_species).view(2, nk, self.n_species)
+            # Apply Green's function and back-interpolate
+            F = torch.einsum('tkj,kij->tki', S, self.G_cn.permute(2, 0, 1))  # (2, nk, n_species)
+            phi_atoms = torch.einsum('tka,tki->ai', ex, F)  # (n_atoms, n_species)
+            
+        batch = torch.arange(n_atoms, device=self.device)
+        cn_raw = phi_atoms[batch, self.species]
+        cn = cn_raw  / self.volume - self.cn_selfcont[self.species]
+        return cn
+    
+    @torch.jit.export
     def compute_c6_weights(self, cn: torch.Tensor) -> torch.Tensor:
         """Compute C6 weights from coordination numbers."""
         atom_refs = self.cnref[self.species]
@@ -296,12 +347,21 @@ class FastD3(torch.nn.Module):
         """
         
         positions = positions * self.angstrom_to_bohr
-        shifts = shifts * self.angstrom_to_bohr
+        if self.cncfunc == 'smooth_cut':
+            shifts = shifts * self.angstrom_to_bohr
         
         n_atoms = positions.size(0)
         
         # Compute coordination numbers
-        cn = self.compute_cn(positions, edge_index, shifts)
+        if self.cnfunc == 'smooth_cut':
+            cn = self.compute_cn_smooth(positions, edge_index, shifts)
+        if self.cnfunc == 'd4' and self.method in ('pme', 'spme'):
+            cn = self.compute_cn_d4(positions)
+        if self.cnfunc == 'd4' and self.method == 'ewald':
+            trig_args = torch.matmul(self.kvectors, positions.T)  # (nk, n_atoms)
+            nk = trig_args.shape[0]
+            ex = torch.stack([torch.cos(trig_args), torch.sin(trig_args)], dim=0)
+            cn = self.compute_cn_d4(positions, ex, nk)
         
         # Compute weights
         weights = self.compute_c6_weights(cn)
@@ -334,11 +394,12 @@ class FastD3(torch.nn.Module):
             energy = torch.dot(self.eigs, filtered_hat)
             
         elif self.method == 'ewald':
-            trig_args = torch.matmul(self.kvectors, positions.T)
-            
-            c = torch.cos(trig_args)
-            s = torch.sin(trig_args)
-            ex = torch.stack([c, s], dim=0)
+            if self.cnfunc == 'smooth_cut':
+                trig_args = torch.matmul(self.kvectors, positions.T)
+                
+                c = torch.cos(trig_args)
+                s = torch.sin(trig_args)
+                ex = torch.stack([c, s], dim=0)
             sc = torch.einsum('izr,pki->rzpk', onehot, ex)
             sqrt_eigs = torch.sqrt(torch.abs(self.eigs))
             sc_weighted = sc * sqrt_eigs.view(-1, 1, 1, 1)
