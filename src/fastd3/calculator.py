@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 from ase.calculators.calculator import Calculator, all_changes
 from matscipy.neighbours import neighbour_list
@@ -9,14 +8,21 @@ from fastd3 import FastD3
 
 
 class FastD3ASECalculator(Calculator):
-    '''
-    ASE wrapper matching the FastD3 usage pattern in your example.
+    """Standalone ASE calculator for Fast-D3 dispersion correction.
 
-    - neighbour_list from matscipy
-    - explicit strain tensor for stress
-    - forces from autograd
-    - Hartree → eV conversion
-    '''
+    Wraps FastD3 in the ASE Calculator interface, providing energy, forces,
+    and stress. Intended for benchmarking or for use with non-MACE MLFFs that
+    do not have a native integration point.
+
+    For MACE + Fast-D3, prefer MACEFastD3Calculator instead, which reuses
+    MACE's neighbour list to avoid redundant computation.
+
+    The stress is computed via automatic differentiation through a strain
+    tensor, following the standard approach in ML force field calculators.
+    The neighbour list is rebuilt via matscipy at every call.
+
+    Units: ASE uses eV and Å. Fast-D3 computes in Hartree and Bohr internally.
+    """
 
     implemented_properties = ["energy", "forces", "stress"]
 
@@ -31,8 +37,8 @@ class FastD3ASECalculator(Calculator):
         xcfunc: str = 'pbe',
         cnfunc='smooth_cut',
         k_cutoff: float = 10.0,
-        mesh_spacing: float = 1.2, # for pme
-        interpolation_nodes: int = 5, # for pme
+        mesh_spacing: float = 1.2,
+        interpolation_nodes: int = 5,
         dtype = torch.float32,
         **kwargs,
     ):
@@ -52,18 +58,21 @@ class FastD3ASECalculator(Calculator):
         self.c6tol = c6tol
         self.method = method
 
-        # not useful for method = 'ewald'
+        # mesh_spacing and interpolation_nodes are only used for method='pme'/'spme'
         self.mesh_spacing = mesh_spacing
         self.interpolation_nodes = interpolation_nodes
-        self.dtype= dtype
-        # placeholder
+        self.dtype = dtype
+
+        # FastD3 model is built lazily on the first calculate() call,
+        # once the atomic species and cell are known
         self._model = None
 
     def _update_cell(self, cell):
+        """Forward a new cell to the FastD3 model (called every step for NPT)."""
         self._model._update_cell(cell=cell)
-            
 
     def _build_model(self, atoms):
+        """Instantiate the FastD3 model for the species and cell of `atoms`."""
         self._model = FastD3(
             species=atoms.numbers,
             cell=atoms.cell.array,
@@ -73,22 +82,24 @@ class FastD3ASECalculator(Calculator):
             c6tol=self.c6tol,
             xcfunc=self.xcfunc,
             cnfunc=self.cnfunc,
-            device = self.device,
+            device=self.device,
             method=self.method,
             interpolation_nodes=self.interpolation_nodes,
-            k_cutoff = self.k_cutoff,
+            k_cutoff=self.k_cutoff,
             verbose=self.verbose,
             r_cut=self.r_cut,
             dtype=self.dtype
         )
-        
-        
 
-    # ideally this reuse nlist from the MLIP but for now let's keep it this for benchmarking
-    def _build_graph(self, atoms, rcut = None):
+    def _build_graph(self, atoms, rcut=None):
+        """Build a neighbour list for the current atoms object via matscipy.
+
+        Returns edge_index (source/target atom pairs) and unit_shifts (integer
+        lattice-vector shifts) as tensors. Only needed for cnfunc='smooth_cut'.
+        """
         if rcut is None:
             rcut = self.r_cut
-            
+
         sender, receiver, unit_shifts = neighbour_list(
             quantities="ijS",
             pbc=atoms.pbc,
@@ -112,14 +123,34 @@ class FastD3ASECalculator(Calculator):
         return edge_index, unit_shifts
 
     def calculate(self, atoms=None, properties=None, system_changes=all_changes):
+        """Compute energy, forces, and stress for the given atoms object.
+
+        Uses a strain tensor with requires_grad=True to obtain the stress via
+        backpropagation. The strain deformation maps:
+            cell'   = cell + strain @ cell
+            positions' = positions + strain @ positions
+        so that d(energy)/d(strain)|_{strain=0} is the stress tensor (in eV/Å^3
+        after unit conversion from Hartree/Bohr^3).
+
+        For cnfunc='smooth_cut': builds a real-space neighbour list and passes
+            it to FastD3.forward together with strained positions and shift vectors.
+        For cnfunc='d4': only strained positions are needed; FastD3.forward
+            computes CN entirely in k-space.
+        """
         super().calculate(atoms, properties, system_changes)
+
+        # Build the model on the first call (lazy initialization)
+        if self._model is None:
+            self._build_model(atoms)
+
         cell = torch.tensor(atoms.cell.array, dtype=self.dtype, device=self.device)
 
+        # Strain tensor: zero at evaluation time, but requires_grad for stress
         strain = torch.zeros(3, 3, dtype=self.dtype, device=self.device)
         strain.requires_grad_(True)
 
+        # Apply infinitesimal strain to the cell
         strained_cell = cell + torch.einsum("ab,Ab->Aa", strain, cell)
-        
         self._update_cell(strained_cell)
 
         positions = torch.tensor(
@@ -128,40 +159,34 @@ class FastD3ASECalculator(Calculator):
             device=self.device,
             requires_grad=True,
         )
-        
+
+        # Apply the same strain to positions and shifts
+        strained_pos = positions + torch.einsum("ab,ib->ia", strain, positions)
+
         if self.cnfunc == 'smooth_cut':
-            strained_pos = positions + torch.einsum("ab,ib->ia", strain, positions)
             edge_index, unit_shifts = self._build_graph(atoms)
             strained_shifts = torch.matmul(unit_shifts, strained_cell)
-
-
-        # compute energy
-        if self.cnfunc == 'smooth_cut':
-            energy = self._model(
-                strained_pos,
-                edge_index,
-                strained_shifts,
-            )
-            
-        if self.cnfunc == 'd4':
+            energy = self._model(strained_pos, edge_index, strained_shifts)
+        elif self.cnfunc == 'd4':
+            # D4 CN needs only positions; no neighbour list required
             energy = self._model(strained_pos)
-        # Hartree → eV
+        else:
+            raise ValueError(f"Unknown cnfunc '{self.cnfunc}'. Expected 'smooth_cut' or 'd4'.")
+
+        # Convert energy from Hartree to eV
         energy_ev = energy * self.HARTREE_TO_EV
 
-        # -------------------------
-        # backward and compute forces and stress
-        # -------------------------
+        # Backpropagate to get forces and stress in one pass
         energy_ev.backward()
 
         forces = -positions.grad
+
+        # Stress: (1/Omega) * dE/dstrain, converted from Bohr^3 to Å^3
         stress = (
             strain.grad
             / self._model.volume * (self.angstrom_to_bohr ** 3)
         )
 
-        # -------------------------
-        # store results
-        # -------------------------
         self.results["energy"] = energy_ev.detach().cpu().item()
         self.results["forces"] = forces.detach().cpu().numpy()
         self.results["stress"] = stress.detach().cpu().numpy()
