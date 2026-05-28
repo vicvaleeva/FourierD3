@@ -50,21 +50,26 @@ def decomp(types: List, c6tol: float, verbose: bool, seed: int = 42, dtype=torch
                  (species, reference CN index) pairs and will later be reshaped
                  to (n_species, 7, r) to build the per-atom C6 weights.
     """
-    c6ref_mat = load_c6ref(types)
+    np_dtype = np.float32 if dtype == torch.float32 else np.float64
+    c6ref_mat = load_c6ref(types).astype(np_dtype)
     rng = np.random.default_rng(seed)
-    v0 = rng.standard_normal(c6ref_mat.shape[0])
+    v0 = rng.standard_normal(c6ref_mat.shape[0]).astype(np_dtype)
     k = 1
     eigs, eigvecs = eigsh(c6ref_mat, k=k, v0=v0)
+    eigs = eigs.astype(np_dtype)
+    eigvecs = eigvecs.astype(np_dtype)
     while maxrel_err(c6ref_mat, eigvecs @ np.diag(eigs) @ eigvecs.T)*100 >= c6tol:
         k += 1
         eigs, eigvecs = eigsh(c6ref_mat, k=k, v0=v0)
+        eigs = eigs.astype(np_dtype)
+        eigvecs = eigvecs.astype(np_dtype)
     err = maxrel_err(c6ref_mat, eigvecs @ np.diag(eigs) @ eigvecs.T)
     if verbose:
         print(f'Using {k}-rank decomposition with maximum relative error: {err*100} %')
     return torch.tensor(eigs, dtype=dtype), torch.tensor(eigvecs, dtype=dtype)
 
 
-def load_sqrtQz(types: List, device) -> torch.Tensor:
+def load_sqrtQz(types: List, device, dtype=torch.float32) -> torch.Tensor:
     """Load sqrt(Q_Z) for the given species, used in the C8 recursive relation.
 
     Q_Z = (1/2) * sqrt(Z) * <r^4>_Z / <r^2>_Z  are element-specific quadrupole
@@ -72,7 +77,7 @@ def load_sqrtQz(types: List, device) -> torch.Tensor:
     C8_{ij} = 3 * C6_{ij} * sqrt(Q_{Z_i} * Q_{Z_j}).
     """
     current_dir = Path(__file__).parent.resolve()
-    return torch.load(current_dir / '..' / '..' / 'data' / 'sqrtQz.pt', weights_only=True)[types].to(device)
+    return torch.load(current_dir / '..' / '..' / 'data' / 'sqrtQz.pt', weights_only=True)[types].to(device=device, dtype=dtype)
 
 
 def load_rcov() -> torch.Tensor:

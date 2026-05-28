@@ -1,3 +1,4 @@
+import math
 from typing import Optional, List
 
 import torch
@@ -158,7 +159,7 @@ class FastD3(torch.nn.Module):
             raise NotImplementedError
 
         # D3Potential computes the analytical FT G_{X,Y}(k) of the BJ-damped potential
-        self.potential = D3Potential(species_unique, params, device, method, order=interpolation_nodes)
+        self.potential = D3Potential(species_unique, params, device, method, order=interpolation_nodes, dtype=dtype)
 
         # For the D4 CN option, set up the CN pair potential and its k-space filter
         if self.cnfunc == 'd4':
@@ -214,10 +215,10 @@ class FastD3(torch.nn.Module):
             # For direct Ewald, precompute all k-vectors within the spherical cutoff
             # and evaluate the Green's function G once (updated on cell change)
             basis_norms = torch.linalg.norm(cell_bohr, dim=1)
-            ns_float = k_cutoff * basis_norms / (2 * torch.pi)
+            ns_float = k_cutoff * basis_norms / (2 * math.pi)
             self.ns = torch.ceil(ns_float).long()
 
-            kvectors = generate_kvectors_for_ewald(ns=self.ns, cell=cell_bohr).to(device)
+            kvectors = generate_kvectors_for_ewald(ns=self.ns, cell=cell_bohr).to(device=device, dtype=dtype)
             knorm = torch.linalg.norm(kvectors, dim=1)
             # G[X, Y, k]: Green's function at each k-point, shape (n_species, n_species, nk)
             G = self.potential.lr_from_k_sq(knorm)
@@ -248,7 +249,7 @@ class FastD3(torch.nn.Module):
                 self.kspace_filter_cn.update(self.cell)
 
         if self.method == 'ewald':
-            self.kvectors = generate_kvectors_for_ewald(ns=self.ns, cell=self.cell)
+            self.kvectors = generate_kvectors_for_ewald(ns=self.ns, cell=self.cell).to(dtype=self.dtype)
             self.knorm = torch.linalg.norm(self.kvectors, dim=1)
             self.G = self.potential.lr_from_k_sq(self.knorm)
             if self.cnfunc == 'd4':

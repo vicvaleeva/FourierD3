@@ -1,3 +1,4 @@
+import math
 from typing import List
 
 import torch
@@ -44,12 +45,12 @@ class D3Potential(Potential):
         self.device = device
         self.order = order
         self.species = species
-        self.params = params.to(device)  # [s6, s8, a1, a2] for BJ damping
-        self.method = method
         self.dtype = dtype
+        self.params = params.to(device=device, dtype=dtype)  # [s6, s8, a1, a2] for BJ damping
+        self.method = method
 
         # sqrt(Q_Z) for each unique species, used in R0 and C8
-        self.sqrtQz = load_sqrtQz(species, device=device)
+        self.sqrtQz = load_sqrtQz(species, device=device, dtype=dtype)
         # QzQz[X, Y] = sqrt(Q_X) * sqrt(Q_Y), shape (n_species, n_species)
         self.QzQz = torch.outer(self.sqrtQz, self.sqrtQz)
 
@@ -72,13 +73,13 @@ class D3Potential(Potential):
         self.Rab8 = self.Rab3 * self.Rab5
 
         # Constants used in the analytical FT formulas
-        self.pi = torch.tensor(torch.pi, device=device)
+        self.pi = torch.tensor(math.pi, device=device, dtype=dtype)
         self.pi2 = self.pi**2
-        self.sq2 = torch.sqrt(torch.tensor(2.0, device=device))
-        self.sq3 = torch.sqrt(torch.tensor(3.0, device=device))
+        self.sq2 = torch.sqrt(torch.tensor(2.0, device=device, dtype=dtype))
+        self.sq3 = torch.sqrt(torch.tensor(3.0, device=device, dtype=dtype))
         self.sin8 = torch.sin(self.pi / 8)   # sin(pi/8), appears in the C8 FT
         self.cos8 = torch.cos(self.pi / 8)   # cos(pi/8), appears in the C8 FT
-        self.thresh = torch.tensor(1e-15, device=device)  # threshold for small-k branch
+        self.thresh = torch.tensor(1e-15, device=device, dtype=dtype)  # threshold for small-k branch
 
         # Self-interaction V_self: limit of phi_{X,X}(r) as r -> 0+.
         # For BJ damping, phi_{X,X}(r) -> s6/R0^6 + 3*s8*Q_X/R0^8 as r->0.
