@@ -1,8 +1,16 @@
-examples/results/*
-src/fastd3.egg-info
-src/fastd3/__pycache__
+# Allowlist: the repo only tracks src/, data/, README.md, pyproject.toml
+# Ignore everything at the top level...
+/*
+# ...except these
+!/src/
+!/data/
+!/README.md
+!/pyproject.toml
+!/.gitignore
 
-*.out
-*.traj
-*.log
-build
+# Always ignore caches / build / OS junk, even inside kept dirs
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+.DS_Store
