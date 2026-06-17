@@ -68,6 +68,17 @@ class FastD3(torch.nn.Module):
     ) -> None:
         super().__init__()
 
+        # On Ampere/Hopper GPUs (e.g. H100), torch may dispatch float32 matmuls
+        # (incl. the complex bmm/einsum over k-points in the reciprocal-space sum)
+        # to TF32 tensor cores. TF32 keeps only a 10-bit mantissa (eps ~ 5e-4),
+        # which caps the float32 energy accuracy at ~1e-2 meV/atom regardless of
+        # mesh size, while true IEEE float32 reaches ~1e-5 meV/atom. Force full
+        # float32 precision so accuracy does not silently depend on the global
+        # cuBLAS/torch default. (No effect on the float64 path.)
+        if dtype == torch.float32:
+            torch.backends.cuda.matmul.allow_tf32 = False
+            torch.backends.cudnn.allow_tf32 = False
+
         self.device = device
         self.dtype = dtype
         self.method = method
