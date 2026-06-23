@@ -2,13 +2,19 @@
 
 ## Installation
 
-To install this package, clone this directory and run 
+To install this package, clone this directory and run
 
 ```sh
 pip install -e .
 ```
 
-You can use `requirements.txt` to configure the environment, but you mainly need `torch`, `ase`, `torch-pme`, and `matscipy`. Additionally, you can install `torch-dftd` to run comparison tests against the classic D3 implementation.
+This pulls in all runtime dependencies (`torch`, `ase`, `torch-pme`, `matscipy`, ...) automatically. To run comparison tests against the classic D3 implementation, install the optional `dftd` extra:
+
+```sh
+pip install -e ".[dftd]"
+```
+
+For MACE support, use the `mace` extra (`pip install -e ".[mace]"`). The pinned `requirements.txt` is also provided if you want to reproduce the exact tested environment.
 
 ## ASE calculator interface
 

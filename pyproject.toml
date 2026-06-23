@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fourierd3"
 version = "0.1.0"
-description = "Fast, GPU-accelerated DFT-D3 dispersion correction with an ASE calculator interface"
+description = "Fourier-space DFT-D3 dispersion correction with an ASE calculator interface"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -21,6 +21,10 @@ dependencies = [
 [project.optional-dependencies]
 mace = ["mace-torch"]
 dftd = ["torch-dftd"]
+
+[project.urls]
+Homepage = "https://github.com/vicvaleeva/FourierD3"
+Repository = "https://github.com/vicvaleeva/FourierD3"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
