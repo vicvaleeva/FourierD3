@@ -10,7 +10,7 @@ import time  # <-- IMPORT ADDED FOR TIMING
 
 # Calculators
 from torch_dftd.torch_dftd3_calculator import TorchDFTD3Calculator
-from fastd3 import FastD3ASECalculator
+from fourierd3 import FourierD3ASECalculator
 
 # ===========================================================
 # HELPER FUNCTION: KENDALL TAU DISTANCE
@@ -89,13 +89,13 @@ total_possible_pairs = (len(valid_ats) * (len(valid_ats) - 1)) // 2
 print(f"Total possible pairwise comparisons: {total_possible_pairs}")
 
 # ===========================================================
-# 2. COMPUTE REFERENCE ORDER (FastD3)
+# 2. COMPUTE REFERENCE ORDER (FourierD3)
 # ===========================================================
 print("\n" + "="*60)
-print(" COMPUTING REFERENCE ENERGIES (FastD3 Ewald)")
+print(" COMPUTING REFERENCE ENERGIES (FourierD3 Ewald)")
 print("="*60)
 
-ref_calc = FastD3ASECalculator(
+ref_calc = FourierD3ASECalculator(
     r_cut=6.0, 
     method="ewald", 
     device=DEVICE, 

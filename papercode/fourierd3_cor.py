@@ -9,7 +9,7 @@ import torch
 import time  
 
 # Calculators
-from fastd3 import FastD3ASECalculator
+from fourierd3 import FourierD3ASECalculator
 
 # ===========================================================
 # HELPER FUNCTION: KENDALL TAU DISTANCE
@@ -86,13 +86,13 @@ total_possible_pairs = (len(valid_ats) * (len(valid_ats) - 1)) // 2
 print(f"Total possible pairwise comparisons: {total_possible_pairs}")
 
 # ===========================================================
-# 2. COMPUTE REFERENCE ORDER (FastD3)
+# 2. COMPUTE REFERENCE ORDER (FourierD3)
 # ===========================================================
 print("\n" + "="*60)
-print(" COMPUTING REFERENCE ENERGIES (FastD3 Ewald, k_cutoff=30.0)")
+print(" COMPUTING REFERENCE ENERGIES (FourierD3 Ewald, k_cutoff=30.0)")
 print("="*60)
 
-ref_calc = FastD3ASECalculator(
+ref_calc = FourierD3ASECalculator(
     r_cut=6.0, 
     method="ewald", 
     device=DEVICE, 
@@ -121,7 +121,7 @@ ref_ranking = [row[0] for row in ref_summary]
 print("[OK] Reference energies computed.")
 
 # ===========================================================
-# 3. OUTER LOOP: EWALD K-CUTOFFS (FastD3)
+# 3. OUTER LOOP: EWALD K-CUTOFFS (FourierD3)
 # ===========================================================
 cutoff_rankings = {}
 pairwise_inversions = []
@@ -137,7 +137,7 @@ for k_cut in K_CUTOFFS:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     ENERGY_FILE = OUT_DIR / f"sp_energies_k{k_cut}.txt"
     
-    d3_calc = FastD3ASECalculator(
+    d3_calc = FourierD3ASECalculator(
         r_cut=6.0, 
         method="ewald", 
         device=DEVICE, 

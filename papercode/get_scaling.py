@@ -1,5 +1,5 @@
 from torch_dftd.torch_dftd3_calculator import TorchDFTD3Calculator
-from fastd3 import FastD3
+from fourierd3 import FourierD3
 from matscipy.neighbours import neighbour_list
 from ase.io import read
 import torch
@@ -49,7 +49,7 @@ for mat in mats:
         confs = read('boxes/'+mat+'/'+str(size)+'.xyz', index=":")
         conf = confs[0]
         conf.set_pbc(True)
-        calc = FastD3(
+        calc = FourierD3(
             species=conf.numbers,
             cell=conf.cell.array,
             pbc=torch.tensor(conf.pbc, device=device),

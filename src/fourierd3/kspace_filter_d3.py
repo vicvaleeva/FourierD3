@@ -3,7 +3,7 @@ import torch
 from torchpme.lib.kspace_filter import KSpaceFilter
 from torchpme.lib.kvectors import _generate_kvectors
 
-from fastd3.utils import safe_inv_3x3
+from fourierd3.utils import safe_inv_3x3
 
 
 class KSpaceFilterD3(KSpaceFilter):

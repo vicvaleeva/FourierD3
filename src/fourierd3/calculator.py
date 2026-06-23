@@ -4,24 +4,24 @@ import torch
 from ase.calculators.calculator import Calculator, all_changes
 from matscipy.neighbours import neighbour_list
 
-from fastd3 import FastD3
+from fourierd3 import FourierD3
 
 
-class FastD3ASECalculator(Calculator):
-    """Standalone ASE calculator for Fast-D3 dispersion correction.
+class FourierD3ASECalculator(Calculator):
+    """Standalone ASE calculator for Fourier-D3 dispersion correction.
 
-    Wraps FastD3 in the ASE Calculator interface, providing energy, forces,
+    Wraps FourierD3 in the ASE Calculator interface, providing energy, forces,
     and stress. Intended for benchmarking or for use with non-MACE MLFFs that
     do not have a native integration point.
 
-    For MACE + Fast-D3, prefer MACEFastD3Calculator instead, which reuses
+    For MACE + Fourier-D3, prefer MACEFourierD3Calculator instead, which reuses
     MACE's neighbour list to avoid redundant computation.
 
     The stress is computed via automatic differentiation through a strain
     tensor, following the standard approach in ML force field calculators.
     The neighbour list is rebuilt via matscipy at every call.
 
-    Units: ASE uses eV and Å. Fast-D3 computes in Hartree and Bohr internally.
+    Units: ASE uses eV and Å. Fourier-D3 computes in Hartree and Bohr internally.
     """
 
     implemented_properties = ["energy", "forces", "stress"]
@@ -63,17 +63,17 @@ class FastD3ASECalculator(Calculator):
         self.interpolation_nodes = interpolation_nodes
         self.dtype = dtype
 
-        # FastD3 model is built lazily on the first calculate() call,
+        # FourierD3 model is built lazily on the first calculate() call,
         # once the atomic species and cell are known
         self._model = None
 
     def _update_cell(self, cell):
-        """Forward a new cell to the FastD3 model (called every step for NPT)."""
+        """Forward a new cell to the FourierD3 model (called every step for NPT)."""
         self._model._update_cell(cell=cell)
 
     def _build_model(self, atoms):
-        """Instantiate the FastD3 model for the species and cell of `atoms`."""
-        self._model = FastD3(
+        """Instantiate the FourierD3 model for the species and cell of `atoms`."""
+        self._model = FourierD3(
             species=atoms.numbers,
             cell=atoms.cell.array,
             pbc=torch.tensor(atoms.pbc, device=self.device),
@@ -133,8 +133,8 @@ class FastD3ASECalculator(Calculator):
         after unit conversion from Hartree/Bohr^3).
 
         For cnfunc='smooth_cut': builds a real-space neighbour list and passes
-            it to FastD3.forward together with strained positions and shift vectors.
-        For cnfunc='d4': only strained positions are needed; FastD3.forward
+            it to FourierD3.forward together with strained positions and shift vectors.
+        For cnfunc='d4': only strained positions are needed; FourierD3.forward
             computes CN entirely in k-space.
         """
         super().calculate(atoms, properties, system_changes)

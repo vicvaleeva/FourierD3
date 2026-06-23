@@ -4,27 +4,27 @@ from ase.calculators.calculator import all_changes
 from ase.stress import full_3x3_to_voigt_6_stress
 
 from mace.calculators import MACECalculator
-from fastd3 import FastD3
+from fourierd3 import FourierD3
 
 
-class MACEFastD3Calculator(MACECalculator):
-    """Hybrid ASE calculator: MACE short-range energy + Fast-D3 dispersion.
+class MACEFourierD3Calculator(MACECalculator):
+    """Hybrid ASE calculator: MACE short-range energy + Fourier-D3 dispersion.
 
-    MACE provides the short-range energy, forces, and stress. Fast-D3 adds the
+    MACE provides the short-range energy, forces, and stress. Fourier-D3 adds the
     long-range DFT-D3 dispersion correction on top. When cnfunc='smooth_cut',
     the neighbour list already built by MACE is reused for the CN computation,
-    making the marginal cost of Fast-D3 very small (no extra neighbour list).
-    When cnfunc='d4', no neighbour list is needed for Fast-D3 at all.
+    making the marginal cost of Fourier-D3 very small (no extra neighbour list).
+    When cnfunc='d4', no neighbour list is needed for Fourier-D3 at all.
 
     Usage:
-        calc = MACEFastD3Calculator(
+        calc = MACEFourierD3Calculator(
             model_paths=["model.pt"],
             d3_kwargs={"xcfunc": "pbe", "method": "spme", "cnfunc": "smooth_cut"},
         )
         atoms.calc = calc
 
     Args:
-        d3_kwargs: keyword arguments forwarded to FastD3.__init__, e.g.
+        d3_kwargs: keyword arguments forwarded to FourierD3.__init__, e.g.
                    xcfunc, method, cnfunc, mesh_spacing, k_cutoff, c6tol, etc.
                    The r_cut is taken from MACE's r_max if not provided.
         **mace_kwargs: all other keyword arguments are forwarded to MACECalculator.
@@ -37,7 +37,7 @@ class MACEFastD3Calculator(MACECalculator):
         self.d3_model = None
 
         # Internal cache: _atoms_to_batch intercepts the graph MACE builds so we
-        # can reuse edge_index and unit_shifts for Fast-D3 (smooth_cut path).
+        # can reuse edge_index and unit_shifts for Fourier-D3 (smooth_cut path).
         self._cached_batch = None
 
         self.angstrom_to_bohr = (1 / 0.52917726)
@@ -47,7 +47,7 @@ class MACEFastD3Calculator(MACECalculator):
         """Intercept the graph construction in MACECalculator.
 
         Saves the batch dict (including edge_index and unit_shifts) so that
-        `calculate` can pass the same neighbour list to Fast-D3 for free,
+        `calculate` can pass the same neighbour list to Fourier-D3 for free,
         without rebuilding it.
         """
         batch = super()._atoms_to_batch(atoms)
@@ -55,7 +55,7 @@ class MACEFastD3Calculator(MACECalculator):
         return batch
 
     def _ensure_d3_model(self, atoms, system_changes):
-        """Initialize or reinitialize the FastD3 model when needed.
+        """Initialize or reinitialize the FourierD3 model when needed.
 
         Rebuilds the model if the atomic species change (e.g., different structure).
         For cell-only changes the model is not rebuilt here; `_update_cell` handles that.
@@ -67,7 +67,7 @@ class MACEFastD3Calculator(MACECalculator):
                 self.d3_kwargs["r_cut"] = self.r_max  # r_max comes from the MACE model
                 print('cutoff = ', self.d3_kwargs["r_cut"])
 
-            self.d3_model = FastD3(
+            self.d3_model = FourierD3(
                 species=atoms.numbers,
                 cell=atoms.cell.array,
                 pbc=torch.tensor(atoms.pbc, device=self.device),
@@ -76,7 +76,7 @@ class MACEFastD3Calculator(MACECalculator):
             )
 
     def calculate(self, atoms=None, properties=None, system_changes=all_changes):
-        """Compute MACE energy/forces/stress and add Fast-D3 dispersion on top.
+        """Compute MACE energy/forces/stress and add Fourier-D3 dispersion on top.
 
         The strain tensor trick is used to compute stress via automatic differentiation:
         a zero strain tensor with requires_grad=True is applied to both positions and
@@ -84,7 +84,7 @@ class MACEFastD3Calculator(MACECalculator):
 
         For cnfunc='smooth_cut': the neighbour list from MACE's batch is reused.
         For cnfunc='d4': only positions (and cell via _update_cell) are needed;
-                         edge_index and shifts are not passed to Fast-D3.
+                         edge_index and shifts are not passed to Fourier-D3.
         """
         # Run MACE forward pass (also populates self._cached_batch via _atoms_to_batch)
         super().calculate(atoms, properties, system_changes)
@@ -113,7 +113,7 @@ class MACEFastD3Calculator(MACECalculator):
         # Apply the same strain to positions: pos' = pos + strain @ pos
         strained_pos = positions_d3 + torch.einsum("ab,ib->ia", strain, positions_d3)
 
-        # Compute Fast-D3 energy
+        # Compute Fourier-D3 energy
         if cnfunc == 'smooth_cut':
             # Reuse MACE's neighbour list: shift vectors in Cartesian coords
             unit_shifts = batch["unit_shifts"].to(dtype=self.d3_model.dtype)

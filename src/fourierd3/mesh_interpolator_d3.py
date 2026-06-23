@@ -2,7 +2,7 @@ import torch
 from typing import Optional
 from torchpme.lib.mesh_interpolator import MeshInterpolator
 
-from fastd3.utils import safe_inv_3x3
+from fourierd3.utils import safe_inv_3x3
 
 
 class MeshInterpolatorD3(MeshInterpolator):

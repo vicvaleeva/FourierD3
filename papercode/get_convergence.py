@@ -1,5 +1,5 @@
-from fastd3 import FastD3ASECalculator
-from fastd3 import FastD3
+from fourierd3 import FourierD3ASECalculator
+from fourierd3 import FourierD3
 from torch_dftd.torch_dftd3_calculator import TorchDFTD3Calculator
 import torch
 import time
@@ -14,7 +14,7 @@ mats = ['hea', 'benzene', 'water']
 '''
 
 # reference 
-calc = FastD3ASECalculator(r_cut=6.0, method="ewald", 
+calc = FourierD3ASECalculator(r_cut=6.0, method="ewald", 
                            device=torch.device("cuda"), 
                            c6tol=0.0001, k_cutoff=9.0,
                            verbose=False, dtype=torch.float64)
@@ -76,7 +76,7 @@ mesh_spacings = [13, 6, 2.5, 1.2, 0.4]
 for mat in mats:
     confs = read('boxes/'+mat+'/1000.xyz', ':')
     for mesh_spacing in mesh_spacings:
-        calc = FastD3ASECalculator(r_cut=6.0, method="spme", 
+        calc = FourierD3ASECalculator(r_cut=6.0, method="spme", 
                            device=torch.device("cuda"), interpolation_nodes=5,
                            c6tol=0.001, mesh_spacing=mesh_spacing, verbose=True, dtype=torch.float64)
         energies = []
@@ -139,7 +139,7 @@ for mat in mats:
     confs = read('boxes/'+mat+'/1000.xyz', ':')
     for mesh_spacing in mesh_spacings:
         conf = confs[0]
-        calc = FastD3(
+        calc = FourierD3(
             species=conf.numbers,
             cell=torch.tensor(conf.cell.array, device=device, dtype=torch.float64),
             pbc=torch.tensor(conf.pbc, device=device),

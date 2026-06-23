@@ -1,5 +1,5 @@
-from fastd3 import FastD3ASECalculator
-from fastd3 import FastD3
+from fourierd3 import FourierD3ASECalculator
+from fourierd3 import FourierD3
 from torch_dftd.torch_dftd3_calculator import TorchDFTD3Calculator
 import torch
 import time

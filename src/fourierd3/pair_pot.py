@@ -4,7 +4,7 @@ from typing import List
 import torch
 from torchpme.potentials import Potential
 
-from fastd3.utils import load_sqrtQz, load_en, load_rcov_cn
+from fourierd3.utils import load_sqrtQz, load_en, load_rcov_cn
 
 
 class D3Potential(Potential):

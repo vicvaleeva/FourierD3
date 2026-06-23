@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "fastd3"
+name = "fourierd3"
 version = "0.1.0"
 description = "Fast, GPU-accelerated DFT-D3 dispersion correction with an ASE calculator interface"
 readme = "README.md"

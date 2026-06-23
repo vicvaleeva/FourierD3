@@ -5,16 +5,16 @@ import torch
 from numpy import unique
 from torchpme.lib.kvectors import get_ns_mesh, generate_kvectors_for_ewald
 
-from fastd3.utils import decomp, load_rcov, load_cnref, safe_det_3x3
-from fastd3.pair_pot import D3Potential, CNPotential
-from fastd3.kspace_filter_d3 import KSpaceFilterD3, KSpaceFilterCN
-from fastd3.mesh_interpolator_d3 import MeshInterpolatorD3
+from fourierd3.utils import decomp, load_rcov, load_cnref, safe_det_3x3
+from fourierd3.pair_pot import D3Potential, CNPotential
+from fourierd3.kspace_filter_d3 import KSpaceFilterD3, KSpaceFilterCN
+from fourierd3.mesh_interpolator_d3 import MeshInterpolatorD3
 
 
-class FastD3(torch.nn.Module):
+class FourierD3(torch.nn.Module):
     """Fast DFT-D3 dispersion correction using reciprocal-space summation.
 
-    Evaluates the DFT-D3 dispersion energy via the Fast-D3 framework: the
+    Evaluates the DFT-D3 dispersion energy via the Fourier-D3 framework: the
     environment-dependent pairwise C6 coefficients are approximated by a low-rank
     tensor decomposition, which allows the periodic lattice sum to be evaluated
     efficiently in reciprocal space using Smooth Particle-Mesh Ewald (SPME),
