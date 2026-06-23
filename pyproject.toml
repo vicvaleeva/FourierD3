@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fastd3"
+version = "0.1.0"
+description = "Fast, GPU-accelerated DFT-D3 dispersion correction with an ASE calculator interface"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "numpy",
+    "scipy",
+    "torch",
+    "ase",
+    "torch-pme",
+    "matscipy",
+]
+
+[project.optional-dependencies]
+mace = ["mace-torch"]
+dftd = ["torch-dftd"]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
