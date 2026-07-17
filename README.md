@@ -1,5 +1,23 @@
 # FourierD3
 
+## Citation
+
+If you use this work in any manner, please cite:
+
+> Valeeva, V.; Ho, C-H.; Geiger, M.; Pellegrini, F.; Csányi, G.; Kucukbenli, E.; Ortner, C.
+> *A fast summation method for the DFT-D3 dispersion correction.* arXiv:2607.15103 (2026).
+
+```bibtex
+@article{fourierd3,
+  title   = {A fast summation method for the DFT-D3 dispersion correction},
+  author  = {Valeeva, V. and Ho, C-H. and Geiger, M. and Pellegrini, F.
+             and Cs{\'a}nyi, G. and Kucukbenli, E. and Ortner, C.},
+  journal = {arXiv preprint arXiv:2607.15103},
+  year    = {2026},
+  url     = {https://arxiv.org/abs/2607.15103}
+}
+```
+
 ## Installation
 
 To install this package, clone this directory and run
