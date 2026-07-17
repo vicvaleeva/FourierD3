@@ -32,7 +32,7 @@ This pulls in all runtime dependencies (`torch`, `ase`, `torch-pme`, `matscipy`,
 pip install -e ".[dftd]"
 ```
 
-For MACE support, use the `mace` extra (`pip install -e ".[mace]"`). The pinned `requirements.txt` is also provided if you want to reproduce the exact tested environment.
+For MACE support, use the `mace` extra (`pip install -e ".[mace]"`).
 
 ## ASE calculator interface
 
