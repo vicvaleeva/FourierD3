@@ -5,6 +5,7 @@ from ase.calculators.calculator import Calculator, all_changes
 from matscipy.neighbours import neighbour_list
 
 from fourierd3 import FourierD3
+from fourierd3.neighborlist import SkinNeighborList
 
 
 class FourierD3ASECalculator(Calculator):
@@ -19,9 +20,21 @@ class FourierD3ASECalculator(Calculator):
 
     The stress is computed via automatic differentiation through a strain
     tensor, following the standard approach in ML force field calculators.
-    The neighbour list is rebuilt via matscipy at every call.
+
+    By default the CN neighbour list is rebuilt via matscipy at every call.
+    Passing `skin > 0` switches to a Verlet ("skin") list that is built at
+    `r_cut + skin` and reused for as many steps as the LAMMPS-style
+    every/delay/check policy allows; see `SkinNeighborList`. The CN itself is
+    unchanged, because contributions beyond `r_cut` are masked out.
 
     Units: ASE uses eV and Å. Fourier-D3 computes in Hartree and Bohr internally.
+
+    Args:
+        skin:  buffer width in Å for the CN neighbour list. 0 (default) rebuilds
+               the list every step; > 0 enables the cached Verlet list.
+        every: only consider rebuilding the list every `every` calls.
+        delay: never rebuild until `delay` calls after the last rebuild.
+        check: rebuild only when atoms may have left the buffer region.
     """
 
     implemented_properties = ["energy", "forces", "stress"]
@@ -40,6 +53,10 @@ class FourierD3ASECalculator(Calculator):
         mesh_spacing: float = 1.2,
         interpolation_nodes: int = 5,
         dtype = torch.float32,
+        skin: float = 0.0,
+        every: int = 1,
+        delay: int = 0,
+        check: bool = True,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -63,6 +80,19 @@ class FourierD3ASECalculator(Calculator):
         self.interpolation_nodes = interpolation_nodes
         self.dtype = dtype
 
+        # CN neighbour list. With skin == 0 this rebuilds on every call, which
+        # is the historical behaviour; with skin > 0 it caches across steps.
+        self.neighbor_list = SkinNeighborList(
+            cutoff=self.r_cut,
+            skin=skin,
+            every=every,
+            delay=delay,
+            check=check,
+            device=self.device,
+            dtype=self.dtype,
+            verbose=verbose,
+        )
+
         # FourierD3 model is built lazily on the first calculate() call,
         # once the atomic species and cell are known
         self._model = None
@@ -73,6 +103,9 @@ class FourierD3ASECalculator(Calculator):
 
     def _build_model(self, atoms):
         """Instantiate the FourierD3 model for the species and cell of `atoms`."""
+        # A new model means a new structure, so any cached neighbour list is stale
+        self.neighbor_list.reset()
+
         self._model = FourierD3(
             species=atoms.numbers,
             cell=atoms.cell.array,
@@ -96,6 +129,9 @@ class FourierD3ASECalculator(Calculator):
 
         Returns edge_index (source/target atom pairs) and unit_shifts (integer
         lattice-vector shifts) as tensors. Only needed for cnfunc='smooth_cut'.
+
+        This always rebuilds from scratch. `calculate` goes through
+        `self.neighbor_list` instead, which caches when a skin is configured.
         """
         if rcut is None:
             rcut = self.r_cut
@@ -164,7 +200,10 @@ class FourierD3ASECalculator(Calculator):
         strained_pos = positions + torch.einsum("ab,ib->ia", strain, positions)
 
         if self.cnfunc == 'smooth_cut':
-            edge_index, unit_shifts = self._build_graph(atoms)
+            # Cached when skin > 0, rebuilt every step otherwise. Unit shifts are
+            # integer lattice indices, so multiplying by the strained cell keeps
+            # the shift vectors (and hence the stress) correct across reuses.
+            edge_index, unit_shifts = self.neighbor_list.get(atoms)
             strained_shifts = torch.matmul(unit_shifts, strained_cell)
             energy = self._model(strained_pos, edge_index, strained_shifts)
         elif self.cnfunc == 'd4':

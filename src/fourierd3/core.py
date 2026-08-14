@@ -295,8 +295,10 @@ class FourierD3(torch.nn.Module):
         vec_ij = positions[target] - positions[source] + shifts
         r_ab = torch.linalg.norm(vec_ij, dim=-1)
 
-        # Exclude self-pairs (r ~ 0)
-        mask = r_ab > 1e-6
+        # Exclude self-pairs (r ~ 0) and any pair beyond r_cut. The latter
+        # matters when the caller supplies a list built with a larger cutoff
+        # (e.g. a skin neighbour list, or MACE's list at r_max > r_cut).
+        mask = (r_ab > 1e-6) & (r_ab <= self.r_cut)
         source_m = source[mask]
         target_m = target[mask]
         r_ab_m = r_ab[mask]
@@ -370,9 +372,14 @@ class FourierD3(torch.nn.Module):
         arg_r = -k_cn * (ratio * inv_r - 1.0)
         edge_contributions = torch.sigmoid(-arg_r)
 
-        # Zero out self-pair contributions (r ~ 0)
+        # Zero out self-pairs (r ~ 0) and everything past r_cut. theta_{ij}
+        # already decays to zero at r_cut, so masking is continuous and adds no
+        # force discontinuity; it makes the result exactly independent of the
+        # cutoff the neighbour list was built with. That is what lets a skin
+        # neighbour list (built at r_cut + skin) reproduce the unbuffered CN
+        # bit for bit, and likewise for MACE's list when r_max > r_cut.
         edge_contributions = torch.where(
-            r_ab > 1e-6,
+            (r_ab > 1e-6) & (r_ab <= self.r_cut),
             edge_contributions,
             torch.tensor(0.0, dtype=self.dtype, device=self.device)
         )

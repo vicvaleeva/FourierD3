@@ -62,3 +62,23 @@ conf.get_potential_energy()
 conf.get_forces()
 conf.get_stress()
 ```
+
+## [Experimental] Using skin-type neighborlist
+
+Rebuilding the coordination-number neighbour list at every step can be slow,
+particularly when `r_cut` is large. A neighbour list with a skin layer is
+provided, with hyperparameters similar to those in
+[LAMMPS](https://docs.lammps.org/neigh_modify.html#description):
+
+```python
+calc = FourierD3ASECalculator(r_cut=10.0, method="spme",
+    every=1, delay=0, check=True, skin=1.0)  # skin-type nlist parameters
+```
+
+The list is built at `r_cut + skin` and reused for as long as `every`, `delay`
+and `check` allow; `skin=0` (the default) rebuilds every step. The same
+parameters exist on `MACEFourierD3Calculator`, where they apply only if
+`r_cut != r_max` (otherwise MACE's own graph is reused).
+
+Adapted from the skin neighborlist in Jerry Ho's fork of
+[torch-dftd](https://github.com/CheukHinHoJerry/torch-dftd).
