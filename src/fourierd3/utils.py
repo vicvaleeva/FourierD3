@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from scipy.sparse.linalg import eigsh
 
+data_dir = Path(__file__).parent.resolve() / 'data'
 
 def load_c6ref(types: List) -> torch.Tensor:
     """Load the C6^ref reference tensor and extract the block for the given species.
@@ -17,8 +18,7 @@ def load_c6ref(types: List) -> torch.Tensor:
     into a symmetric (n_species*7, n_species*7) matrix M, ready for the
     eigendecomposition in `decomp`.
     """
-    current_dir = Path(__file__).parent.resolve()
-    c6ref = torch.load(current_dir / '..' / '..' / 'data' / 'reference-c6.pt', weights_only=True)
+    c6ref = torch.load(data_dir / 'reference-c6.pt', weights_only=True)
     return c6ref[types][:, types].permute(0, 2, 1, 3).reshape(len(types)*7, len(types)*7).numpy()
 
 
@@ -80,8 +80,7 @@ def load_sqrtQz(types: List, device, dtype=torch.float32) -> torch.Tensor:
     moment ratios derived from atomic densities. The C8 coefficients are then
     C8_{ij} = 3 * C6_{ij} * sqrt(Q_{Z_i} * Q_{Z_j}).
     """
-    current_dir = Path(__file__).parent.resolve()
-    return torch.load(current_dir / '..' / '..' / 'data' / 'sqrtQz.pt', weights_only=True)[types].to(device=device, dtype=dtype)
+    return torch.load(data_dir / 'sqrtQz.pt', weights_only=True)[types].to(device=device, dtype=dtype)
 
 
 def load_rcov() -> torch.Tensor:
@@ -91,8 +90,7 @@ def load_rcov() -> torch.Tensor:
     sum R^cov_{ij} = R^cov_i + R^cov_j sets the
     distance scale at which two atoms are considered bonded.
     """
-    current_dir = Path(__file__).parent.resolve()
-    return torch.load(current_dir / '..' / '..' /  'data' / 'rcov.pt', weights_only=True)
+    return torch.load(data_dir / 'rcov.pt', weights_only=True)
 
 
 def load_cnref() -> torch.Tensor:
@@ -102,8 +100,7 @@ def load_cnref() -> torch.Tensor:
     used to interpolate the pairwise C6 coefficients. Entries equal to -1
     indicate unused reference environments and are masked during softmax.
     """
-    current_dir = Path(__file__).parent.resolve()
-    return torch.load(current_dir / '..' /  '..' / 'data' / 'cnref.pt', weights_only=True)
+    return torch.load(data_dir / 'cnref.pt', weights_only=True)
 
 
 def load_en() -> torch.Tensor:
@@ -113,8 +110,7 @@ def load_en() -> torch.Tensor:
     difference |EN_A - EN_B| controls how strongly
     pairs of unlike elements contribute to each other's coordination number.
     """
-    current_dir = Path(__file__).parent.resolve()
-    return torch.load(current_dir / '..' / '..' / 'data' / 'en.pt', weights_only=True)
+    return torch.load(data_dir / 'en.pt', weights_only=True)
 
 
 def load_rcov_cn() -> torch.Tensor:
@@ -123,8 +119,7 @@ def load_rcov_cn() -> torch.Tensor:
     These may differ slightly from the radii in `load_rcov` (which come from Pyykko
     et al.) because the D4 CN function uses a different reference dataset.
     """
-    current_dir = Path(__file__).parent.resolve()
-    return torch.load(current_dir / '..' / '..' /  'data' / 'rcov_cn.pt', weights_only=True)
+    return torch.load(data_dir / 'rcov_cn.pt', weights_only=True)
 
 
 def safe_det_3x3(m: torch.Tensor) -> torch.Tensor:
