@@ -6,6 +6,8 @@ import numpy as np
 
 
 device = torch.device('cuda')
+# events/synchronize below act on the current device, so pin it to `device`
+torch.cuda.set_device(device)
 start_event = torch.cuda.Event(enable_timing=True)
 end_event = torch.cuda.Event(enable_timing=True)
 
@@ -23,7 +25,7 @@ for mat in mats:
         conf.set_pbc(True)
 
         calc = TorchDFTD3Calculator(
-            device="cuda",
+            device=str(device),
             damping="bj",
             xc='pbe',
             cnthr=6,
