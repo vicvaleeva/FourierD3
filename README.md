@@ -23,16 +23,16 @@ If you use this work in any manner, please cite:
 To install this package, clone this directory and run
 
 ```sh
-pip install -e .
+pip install .
 ```
 
 This pulls in all runtime dependencies (`torch`, `ase`, `torch-pme`, `matscipy`, ...) automatically. To run comparison tests against the classic D3 implementation, install the optional `dftd` extra:
 
 ```sh
-pip install -e ".[dftd]"
+pip install ".[dftd]"
 ```
 
-For MACE support, use the `mace` extra (`pip install -e ".[mace]"`).
+For MACE support, use the `mace` extra (`pip install ".[mace]"`).
 
 ## ASE calculator interface
 
@@ -79,6 +79,11 @@ The list is built at `r_cut + skin` and reused for as long as `every`, `delay`
 and `check` allow; `skin=0` (the default) rebuilds every step. The same
 parameters exist on `MACEFourierD3Calculator`, where they apply only if
 `r_cut != r_max` (otherwise MACE's own graph is reused).
+
+However, we would like to stress that using a large coordination number neighbour list 
+is ill-defined and not necessarily better, as shown in section A of the Appendix.
+The intended use of the package is to re-use the neighbour list from the underlying
+MLIP for the calculation of the coordination number, rather than compute a new one.
 
 Adapted from the skin neighborlist in Jerry Ho's fork of
 [torch-dftd](https://github.com/CheukHinHoJerry/torch-dftd).
