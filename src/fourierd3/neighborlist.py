@@ -208,11 +208,13 @@ class SkinNeighborList:
 
     def _build(self, atoms):
         """Build the neighbour list at ``cutoff + skin`` and cache it."""
+        # use wrapped positions so that unit_shift in neighbor list doesn't
+        # include irrelevant overall drift
         sender, receiver, unit_shifts = neighbour_list(
             quantities="ijS",
             pbc=atoms.pbc,
             cell=atoms.cell,
-            positions=atoms.get_positions(),
+            positions=atoms.get_scaled_positions(wrap=True) @ atoms.cell,
             cutoff=self.build_cutoff,
         )
 
@@ -229,8 +231,10 @@ class SkinNeighborList:
 
         # Largest image index per lattice direction, used to bound how much a
         # cell deformation can move the shift vectors (see _buffer_exhausted)
+        # add 1 to check against next closest image that is currently outside cutoff,
+        # becoming close enough to matter
         if len(unit_shifts):
-            self._max_unit_shift = np.abs(unit_shifts).max(axis=0)
+            self._max_unit_shift = np.abs(unit_shifts).max(axis=0) + 1
         else:
             self._max_unit_shift = np.zeros(3, dtype=np.int64)
 
