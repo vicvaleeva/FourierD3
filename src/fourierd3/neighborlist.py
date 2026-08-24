@@ -210,11 +210,17 @@ class SkinNeighborList:
         """Build the neighbour list at ``cutoff + skin`` and cache it."""
         # use wrapped positions so that unit_shift in neighbor list doesn't
         # include irrelevant overall drift
+        # will need to modify shifts that are returned by get() to correct for this
+        positions_s = atoms.get_scaled_positions(wrap=False)
+        positions_s_wrap = np.floor(positions_s)
+        positions_s -= positions_s_wrap
+        positions = positions_s @ atoms.cell
+
         sender, receiver, unit_shifts = neighbour_list(
             quantities="ijS",
             pbc=atoms.pbc,
             cell=atoms.cell,
-            positions=atoms.get_scaled_positions(wrap=True) @ atoms.cell,
+            positions=positions,
             cutoff=self.build_cutoff,
         )
 
@@ -223,20 +229,32 @@ class SkinNeighborList:
             dtype=torch.long,
             device=self.device,
         )
+
+        # Largest image index per lattice direction, used to bound how much a
+        # cell deformation can move the shift vectors (see _buffer_exhausted)
+        # add 1 to check against next closest image that is currently outside cutoff,
+        # becoming close enough to matter.
+        # Need to do this with raw unit_shifts, before they are corrected for wrapping
+        if len(unit_shifts):
+            self._max_unit_shift = np.abs(unit_shifts).max(axis=0) + 1
+        else:
+            self._max_unit_shift = np.zeros(3, dtype=np.int64)
+
+        # reconstruct unit_shifts that would have been used if positions were not
+        # wrapped, so that returned values are correct, namely
+        #     d = p_j - p_i + S @ cell
+        # as documented in https://github.com/libAtoms/matscipy/blob/770636d/matscipy/neighbours.py#L553
+        # we used
+        #     d = (p_j - p_j_wrap @ cell) - (p_i - p_i_wrap @ cell) + S @ cell
+        #       = p_j - p_i + (S + p_j_wrap - p_i_wrap) @ cell
+        unit_shifts += positions_s_wrap[sender].astype(int) # i
+        unit_shifts -= positions_s_wrap[receiver].astype(int) # j
+
         self._unit_shifts = torch.as_tensor(
             unit_shifts,
             dtype=self.dtype,
             device=self.device,
         )
-
-        # Largest image index per lattice direction, used to bound how much a
-        # cell deformation can move the shift vectors (see _buffer_exhausted)
-        # add 1 to check against next closest image that is currently outside cutoff,
-        # becoming close enough to matter
-        if len(unit_shifts):
-            self._max_unit_shift = np.abs(unit_shifts).max(axis=0) + 1
-        else:
-            self._max_unit_shift = np.zeros(3, dtype=np.int64)
 
         self._ref_positions = atoms.get_positions().copy()
         self._ref_cell = np.asarray(atoms.cell).copy()
