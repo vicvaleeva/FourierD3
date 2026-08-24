@@ -129,6 +129,7 @@ class SkinNeighborList:
         self._edge_index = None
         self._unit_shifts = None
         self._max_unit_shift = np.zeros(3, dtype=np.int64)
+        self._ref_positions = None
         self._ref_scaled = None
         self._ref_cell = None
         self._ref_numbers = None
@@ -192,15 +193,18 @@ class SkinNeighborList:
         ``sum_a |S_a|_max * ||dcell_a||`` over the lattice vectors a, using the
         largest image index present in the cached list.
         """
-        # calculate Cartesian displacement based on wrapped image
-        scaled_positions = atoms.get_scaled_positions()
+        # make sure to get non-wrapped scaled positions, so mic displacement
+        # calculation below is consistent with non-scaled Cartesian positions
+        # to which it will be added below
+        scaled_positions = atoms.get_scaled_positions(wrap=False)
         if len(scaled_positions) == 0:
             return False
 
-        # use minimum image for Cartesian displacements
+        # For Cartesian displacement use
+        #   wrapped(p_ref) - mic(p_cur)
         scaled_delta = scaled_positions - self._ref_scaled
-        scaled_delta -= np.round(scaled_delta)
-        delta = scaled_delta @ atoms.cell
+        scaled_mic_shift = np.round(scaled_delta)
+        delta = self._ref_positions - (atoms.positions - scaled_mic_shift @ atoms.cell)
         max_disp = float(np.sqrt(np.einsum("ij,ij->i", delta, delta)).max())
 
         dcell = np.asarray(atoms.cell) - self._ref_cell
@@ -260,7 +264,8 @@ class SkinNeighborList:
         )
 
         # store wrapped position for Cartesian displacement
-        self._ref_scaled = positions_s
+        self._ref_positions = positions # generated locally
+        self._ref_scaled = positions_s # generated locally
         self._ref_cell = np.asarray(atoms.cell).copy()
         self._ref_numbers = atoms.numbers.copy()
         self.n_rebuilds += 1
