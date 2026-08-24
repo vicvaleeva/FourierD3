@@ -260,7 +260,7 @@ class SkinNeighborList:
         )
 
         # store wrapped position for Cartesian displacement
-        self._ref_scaled = atoms.get_scaled_positions()
+        self._ref_scaled = positions_s
         self._ref_cell = np.asarray(atoms.cell).copy()
         self._ref_numbers = atoms.numbers.copy()
         self.n_rebuilds += 1
