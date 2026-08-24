@@ -129,7 +129,7 @@ class SkinNeighborList:
         self._edge_index = None
         self._unit_shifts = None
         self._max_unit_shift = np.zeros(3, dtype=np.int64)
-        self._ref_positions = None
+        self._ref_scaled = None
         self._ref_cell = None
         self._ref_numbers = None
 
@@ -193,11 +193,14 @@ class SkinNeighborList:
         largest image index present in the cached list.
         """
         # calculate Cartesian displacement based on wrapped image
-        positions = atoms.get_positions(wrap=True)
-        if len(positions) == 0:
+        scaled_positions = atoms.get_scaled_positions()
+        if len(scaled_positions) == 0:
             return False
 
-        delta = positions - self._ref_positions
+        # use minimum image for Cartesian displacements
+        scaled_delta = scaled_positions - self._ref_scaled
+        scaled_delta -= np.round(scaled_delta)
+        delta = scaled_delta @ atoms.cell
         max_disp = float(np.sqrt(np.einsum("ij,ij->i", delta, delta)).max())
 
         dcell = np.asarray(atoms.cell) - self._ref_cell
@@ -246,7 +249,7 @@ class SkinNeighborList:
         # as documented in https://github.com/libAtoms/matscipy/blob/770636d/matscipy/neighbours.py#L553
         # we used
         #     d = (p_j - p_j_wrap @ cell) - (p_i - p_i_wrap @ cell) + S @ cell
-        #       = p_j - p_i + (S + p_j_wrap - p_i_wrap) @ cell
+        #       = p_j - p_i + (S + p_i_wrap - p_j_wrap) @ cell
         unit_shifts += positions_s_wrap[sender].astype(int) # i
         unit_shifts -= positions_s_wrap[receiver].astype(int) # j
 
@@ -257,7 +260,7 @@ class SkinNeighborList:
         )
 
         # store wrapped position for Cartesian displacement
-        self._ref_positions = atoms.get_positions(wrap=True)
+        self._ref_scaled = atoms.get_scaled_positions()
         self._ref_cell = np.asarray(atoms.cell).copy()
         self._ref_numbers = atoms.numbers.copy()
         self.n_rebuilds += 1
