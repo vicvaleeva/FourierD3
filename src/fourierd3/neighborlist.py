@@ -192,7 +192,8 @@ class SkinNeighborList:
         ``sum_a |S_a|_max * ||dcell_a||`` over the lattice vectors a, using the
         largest image index present in the cached list.
         """
-        positions = atoms.get_positions()
+        # calculate Cartesian displacement based on wrapped image
+        positions = atoms.get_positions(wrap=True)
         if len(positions) == 0:
             return False
 
@@ -203,14 +204,13 @@ class SkinNeighborList:
         cell_slack = float(
             np.dot(self._max_unit_shift, np.linalg.norm(dcell, axis=1))
         )
-
         return 2.0 * max_disp + cell_slack > self.skin
 
     def _build(self, atoms):
         """Build the neighbour list at ``cutoff + skin`` and cache it."""
-        # use wrapped positions so that unit_shift in neighbor list doesn't
-        # include irrelevant overall drift
-        # will need to modify shifts that are returned by get() to correct for this
+        # Use wrapped positions so that max_unit_shift in neighbor list doesn't
+        # include irrelevant overall drift.  Will need to modify shifts that are
+        # returned by get() to correct for this.
         positions_s = atoms.get_scaled_positions(wrap=False)
         positions_s_wrap = np.floor(positions_s)
         positions_s -= positions_s_wrap
@@ -256,7 +256,8 @@ class SkinNeighborList:
             device=self.device,
         )
 
-        self._ref_positions = atoms.get_positions().copy()
+        # store wrapped position for Cartesian displacement
+        self._ref_positions = atoms.get_positions(wrap=True)
         self._ref_cell = np.asarray(atoms.cell).copy()
         self._ref_numbers = atoms.numbers.copy()
         self.n_rebuilds += 1
