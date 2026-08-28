@@ -130,6 +130,7 @@ class SkinNeighborList:
         self._unit_shifts = None
         self._max_unit_shift = np.zeros(3, dtype=np.int64)
         self._ref_positions = None
+        self._ref_scaled = None
         self._ref_cell = None
         self._ref_numbers = None
 
@@ -192,27 +193,41 @@ class SkinNeighborList:
         ``sum_a |S_a|_max * ||dcell_a||`` over the lattice vectors a, using the
         largest image index present in the cached list.
         """
-        positions = atoms.get_positions()
-        if len(positions) == 0:
+        # make sure to get non-wrapped scaled positions, so mic displacement
+        # calculation below is consistent with non-scaled Cartesian positions
+        # to which it will be added below
+        scaled_positions = atoms.get_scaled_positions(wrap=False)
+        if len(scaled_positions) == 0:
             return False
 
-        delta = positions - self._ref_positions
+        # For Cartesian displacement use
+        #   wrapped(p_ref) - mic(p_cur)
+        scaled_delta = scaled_positions - self._ref_scaled
+        scaled_mic_shift = np.round(scaled_delta)
+        delta = self._ref_positions - (atoms.positions - scaled_mic_shift @ atoms.cell)
         max_disp = float(np.sqrt(np.einsum("ij,ij->i", delta, delta)).max())
 
         dcell = np.asarray(atoms.cell) - self._ref_cell
         cell_slack = float(
             np.dot(self._max_unit_shift, np.linalg.norm(dcell, axis=1))
         )
-
         return 2.0 * max_disp + cell_slack > self.skin
 
     def _build(self, atoms):
         """Build the neighbour list at ``cutoff + skin`` and cache it."""
+        # Use wrapped positions so that max_unit_shift in neighbor list doesn't
+        # include irrelevant overall drift.  Will need to modify shifts that are
+        # returned by get() to correct for this.
+        positions_s = atoms.get_scaled_positions(wrap=False)
+        positions_s_wrap = np.floor(positions_s)
+        positions_s -= positions_s_wrap
+        positions = positions_s @ atoms.cell
+
         sender, receiver, unit_shifts = neighbour_list(
             quantities="ijS",
             pbc=atoms.pbc,
             cell=atoms.cell,
-            positions=atoms.get_positions(),
+            positions=positions,
             cutoff=self.build_cutoff,
         )
 
@@ -221,20 +236,38 @@ class SkinNeighborList:
             dtype=torch.long,
             device=self.device,
         )
+
+        # Largest image index per lattice direction, used to bound how much a
+        # cell deformation can move the shift vectors (see _buffer_exhausted)
+        # add 1 to check against next closest image that is currently outside cutoff,
+        # becoming close enough to matter.
+        # Need to do this with raw unit_shifts, before they are corrected for wrapping
+        if len(unit_shifts):
+            self._max_unit_shift = np.abs(unit_shifts).max(axis=0) + 1
+        else:
+            # the +1 above applies here too: a cell change can pull a first
+            # neighbour into range even when the list is currently empty
+            self._max_unit_shift = np.ones(3, dtype=np.int64)
+
+        # reconstruct unit_shifts that would have been used if positions were not
+        # wrapped, so that returned values are correct, namely
+        #     d = p_j - p_i + S @ cell
+        # as documented in https://github.com/libAtoms/matscipy/blob/770636d/matscipy/neighbours.py#L553
+        # we used
+        #     d = (p_j - p_j_wrap @ cell) - (p_i - p_i_wrap @ cell) + S @ cell
+        #       = p_j - p_i + (S + p_i_wrap - p_j_wrap) @ cell
+        unit_shifts += positions_s_wrap[sender].astype(int) # i
+        unit_shifts -= positions_s_wrap[receiver].astype(int) # j
+
         self._unit_shifts = torch.as_tensor(
             unit_shifts,
             dtype=self.dtype,
             device=self.device,
         )
 
-        # Largest image index per lattice direction, used to bound how much a
-        # cell deformation can move the shift vectors (see _buffer_exhausted)
-        if len(unit_shifts):
-            self._max_unit_shift = np.abs(unit_shifts).max(axis=0)
-        else:
-            self._max_unit_shift = np.zeros(3, dtype=np.int64)
-
-        self._ref_positions = atoms.get_positions().copy()
+        # store wrapped position for Cartesian displacement
+        self._ref_positions = positions # generated locally
+        self._ref_scaled = positions_s # generated locally
         self._ref_cell = np.asarray(atoms.cell).copy()
         self._ref_numbers = atoms.numbers.copy()
         self.n_rebuilds += 1
