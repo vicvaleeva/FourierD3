@@ -245,7 +245,9 @@ class SkinNeighborList:
         if len(unit_shifts):
             self._max_unit_shift = np.abs(unit_shifts).max(axis=0) + 1
         else:
-            self._max_unit_shift = np.zeros(3, dtype=np.int64)
+            # the +1 above applies here too: a cell change can pull a first
+            # neighbour into range even when the list is currently empty
+            self._max_unit_shift = np.ones(3, dtype=np.int64)
 
         # reconstruct unit_shifts that would have been used if positions were not
         # wrapped, so that returned values are correct, namely
