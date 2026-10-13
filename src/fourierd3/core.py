@@ -332,7 +332,7 @@ class FourierD3(torch.nn.Module):
         discussed in the Appendix. The exponent t_{ij}(r) is:
 
             R^mid_{ij} = (R^cov_{ij} + r_cut) / 2
-            t_{ij}(r) = 16 + (r - R^mid_{ij})^2 / (r_cut - R^mid_{ij})^2    if r > R^mid_{ij}
+            t_{ij}(r) = 16 + (r - R^mid_{ij})^2 / (r_cut - r)^2    if r > R^mid_{ij}
                        = 16                                                     otherwise
 
         so theta_{ij}(r) = sigmoid(t_{ij}(r) * (4*R^cov_{ij}/(3*r) - 1)) decays to
