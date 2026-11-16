@@ -11,6 +11,15 @@ from fourierd3.kspace_filter_d3 import KSpaceFilterD3, KSpaceFilterCN
 from fourierd3.mesh_interpolator_d3 import MeshInterpolatorD3
 
 
+# D3(BJ) damping parameters [s6, s8, a1, a2], from simple-dftd3 assets/parameters.toml
+BJ_PARAMS = {
+    'pbe':    [1.0, 0.7875, 0.4289, 4.4407],                # doi:10.1002/jcc.21759
+    'rpbe':   [1.0, 0.8318, 0.1820, 4.0094],
+    'revpbe': [1.0, 2.3550, 0.5238, 3.5016],                # doi:10.1002/jcc.21759
+    'r2scan': [1.0, 0.78981345, 0.49484001, 5.73083694],    # doi:10.1063/5.0041008
+}
+
+
 class FourierD3(torch.nn.Module):
     """Fast DFT-D3 dispersion correction using reciprocal-space summation.
 
@@ -161,13 +170,15 @@ class FourierD3(torch.nn.Module):
         self.register_buffer('logit_scale', torch.tensor(-4.0, dtype=dtype, device=device))
 
         # --- BJ damping parameters [s6, s8, a1, a2] ---
-        # Default values are for the PBE functional
+        # D3(BJ) values from simple-dftd3 (assets/parameters.toml)
         if params is not None:
             params = torch.tensor(params, device=device, dtype=dtype)
-        elif xcfunc == 'pbe':
-            params = torch.tensor([1.0, 0.7875, 0.4289, 4.4407], device=device, dtype=dtype)
+        elif xcfunc.lower() in BJ_PARAMS:
+            params = torch.tensor(BJ_PARAMS[xcfunc.lower()], device=device, dtype=dtype)
         else:
-            raise NotImplementedError
+            raise NotImplementedError(
+                f"No D3(BJ) parameters for xcfunc={xcfunc!r}; available: "
+                f"{sorted(BJ_PARAMS)} (or pass params=[s6, s8, a1, a2])")
 
         # D3Potential computes the analytical FT G_{X,Y}(k) of the BJ-damped potential
         self.potential = D3Potential(species_unique, params, device, method, order=interpolation_nodes, dtype=dtype)
